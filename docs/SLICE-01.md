@@ -1,7 +1,7 @@
 # SLICE-01: Processing — Спецификация реализации
 
 > **Статус:** Действующий / Ready for Implementation
-> **Версия:** 1.0
+> **Версия:** v0.2
 > **Дата:** 14 октября 2026 г.
 > **Спринт:** 2 (Дни 15–28)
 > **Зависимости:** Slice 0 (Foundation) — монорепозиторий, `docker-compose.yml`, `make gate`, базовые модели БД
@@ -37,9 +37,9 @@ backend/
       convert.py            # POST /upload, GET /jobs/{id}/stream, GET /jobs/{id}/download
     services/
       converter_service.py  # координация: валидация PDF, постановка задачи, pre-signed URLs
-      storage_service.py    # S3 клиент (aioboto3): upload, download, presign
+      storage_service.py    # S3 клиент (boto3 sync + run_in_executor): upload, download, presign
     workers/
-      worker.py             # точка входа rq worker процесса
+      worker.py             # точка входа rq worker с warmup-инициализацией Docling
       tasks.py              # фоновые задачи: parse_and_convert, render_preview
     models/
       job.py                # SQLAlchemy модель conversion_jobs
@@ -81,16 +81,27 @@ backend/
 async def upload_pdf(file, target_format, fingerprint, request, db, user):
     validate_file_type(file)        # Magic Bytes + MIME
     validate_file_size(file, user)  # 10MB / 100MB
+    sha256 = compute_sha256(file)   # SHA-256 входного PDF
+    check_dedup(sha256, user, request, redis_conn)  # Redis SET dedup:{sha256}:{scope} TTL 2h
     check_daily_limit(user, fingerprint, request.client.host, db)
 
     s3_key = f"temp/{uuid4()}/input.pdf"
     await storage_service.upload(file, s3_key)
 
+    # Токен доступа для анонимных пользователей
+    session_token_hash: str | None = None
+    if user is None:
+        raw_token = f"{uuid4()}{request.client.host}{request.headers.get('user-agent', '')}"
+        session_token_hash = sha256hex(raw_token)
+        set_anon_session_cookie(response, session_token_hash)  # HttpOnly, TTL 2h
+
     job = ConversionJob(
         user_id=user.id if user else None,
+        session_token_hash=session_token_hash,
         target_format=target_format,
         original_filename=file.filename,
         file_size_bytes=file.size,
+        sha256_checksum=sha256,
         status="queued",
         s3_input_key=s3_key,
     )
@@ -195,15 +206,19 @@ data: {"job_id":"...","status":"failed","progress_percent":0,"current_step":"О�
 
 1. Загрузить запись `conversion_jobs` из БД по `job_id`.
 2. Проверить: `status == 'completed'` И `expires_at > NOW()`.
-3. Проверить `is_preview_only`:
+3. **Проверка авторства:**
+   - Авторизованный: `job.user_id == current_user.id` → если нет → `403 ACCESS_DENIED`.
+   - Анонимный: сравнить `SHA-256(значение cookie anon_session)` == `job.session_token_hash` → если нет → `403 ACCESS_DENIED`.
+4. Проверить `is_preview_only`:
    - `True` → вернуть `403 UPGRADE_REQUIRED` (нужен PRO для скачивания всего документа).
    - `False` → сгенерировать pre-signed URL на `s3_output_key` с TTL 15 минут.
-4. Вернуть `307 Temporary Redirect` с заголовком `Content-Disposition: attachment; filename="{original_filename_without_ext}.{target_format}"`.
+5. Вернуть `307 Temporary Redirect` с заголовком `Content-Disposition: attachment; filename="{original_filename_without_ext}.{target_format}"`.
 
 **Ошибки:**
 
 | HTTP | `code` | Условие |
 | :--- | :--- | :--- |
+| `403` | `ACCESS_DENIED` | Жоб принадлежит другому пользователю |
 | `403` | `UPGRADE_REQUIRED` | `is_preview_only = True`, нужна PRO-подписка |
 | `404` | `JOB_NOT_FOUND` | Задача не найдена или срок хранения истек |
 
@@ -303,48 +318,117 @@ def _check_preview_only(job: ConversionJob) -> bool:
 
 ---
 
+## 3a. Warmup воркера (worker.py)
+
+До Docling загружает ML-модели (~2–4 ГБ) при первом вызове `DocumentConverter.convert()`. Чтобы первый реальный job не выходил по таймауту, воркер проводит **warmup** при старте:
+
+```python
+import base64
+import tempfile
+from docling.document_converter import DocumentConverter
+
+# Минимальный валидный 1-страничный PDF (кодирован base64-константой в коде)
+_WARMUP_PDF_B64 = (
+    "JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2"
+    "JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPD4KZW5k"
+    "b2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2"
+    "MTIgNzkyXQo+PgplbmRvYmoKeHJlZgowIDQKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5"
+    "IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAp0cmFpbGVy"
+    "Cjw8Ci9TaXplIDQKL1Jvb3QgMSAwIFIKPj4Kc3RhcnR4cmVmCjE5MgolJUVPRg=="
+)
+
+
+def _warmup_docling() -> None:
+    """Preload Docling ML-models on worker startup to avoid cold-start on first job."""
+    pdf_bytes = base64.b64decode(_WARMUP_PDF_B64)
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+        f.write(pdf_bytes)
+        f.flush()
+        try:
+            DocumentConverter().convert(f.name)
+        except Exception:  # noqa: BLE001  # warmup ошибки не критичны
+            pass
+
+
+if __name__ == "__main__":
+    _warmup_docling()  # <-- вызывается до старта RQ Worker цикла
+    from rq import Connection, Worker
+    with Connection(redis_conn):
+        Worker(["priority", "fast", "heavy"]).work(max_jobs=settings.WORKER_MAX_JOBS)
+```
+
+> **Примечание:** время warmup (~10–20 сек) не входит в `job_timeout`. Docker `healthcheck` для воркера не нужен — используем стандартный `restart: unless-stopped`.
+
+---
+
 ## 4. Сервисный слой
 
 ### 4.1. `storage_service.py`
 
 ```python
-import aioboto3
+import boto3
+from concurrent.futures import ThreadPoolExecutor
 from app.core.config import settings
+
+_executor = ThreadPoolExecutor(max_workers=4)
 
 
 class StorageService:
+    """S3-клиент на базе boto3 (sync).
+
+    В FastAPI-эндпоинтах асинхронные методы вызываются через
+    asyncio.run_in_executor, чтобы не блокировать event loop.
+    В workers/tasks.py (синхронный RQ-контекст) — вызываются напрямую.
+    """
+
     def __init__(self):
-        self.session = aioboto3.Session()
+        self._client = boto3.client(
+            "s3",
+            endpoint_url=settings.S3_ENDPOINT_URL,
+            region_name=settings.S3_REGION,
+            aws_access_key_id=settings.S3_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY,
+        )
+
+    # --- Sync API (для workers/tasks.py) ---
+
+    def upload_sync(self, file_obj, s3_key: str) -> None:
+        self._client.upload_fileobj(
+            file_obj, settings.S3_BUCKET_NAME, s3_key,
+            ExtraArgs={"ServerSideEncryption": "AES256"}
+        )
+
+    def download_sync(self, s3_key: str, local_path: str) -> None:
+        self._client.download_file(settings.S3_BUCKET_NAME, s3_key, local_path)
+
+    def generate_presigned_url_sync(self, s3_key: str, expires_in: int = 900) -> str:
+        return self._client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.S3_BUCKET_NAME, "Key": s3_key},
+            ExpiresIn=expires_in,
+        )
+
+    # --- Async API (для FastAPI endpoints) ---
 
     async def upload(self, file_obj, s3_key: str) -> None:
-        async with self.session.client("s3", **self._s3_kwargs()) as s3:
-            await s3.upload_fileobj(
-                file_obj, settings.S3_BUCKET_NAME, s3_key,
-                ExtraArgs={"ServerSideEncryption": "AES256"}
-            )
+        import asyncio
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_executor, self.upload_sync, file_obj, s3_key)
 
     async def download(self, s3_key: str, local_path: str) -> None:
-        async with self.session.client("s3", **self._s3_kwargs()) as s3:
-            await s3.download_file(settings.S3_BUCKET_NAME, s3_key, local_path)
+        import asyncio
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_executor, self.download_sync, s3_key, local_path)
 
     async def generate_presigned_url(self, s3_key: str, expires_in: int = 900) -> str:
-        async with self.session.client("s3", **self._s3_kwargs()) as s3:
-            return await s3.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": settings.S3_BUCKET_NAME, "Key": s3_key},
-                ExpiresIn=expires_in,
-            )
-
-    def _s3_kwargs(self) -> dict:
-        return {
-            "endpoint_url": settings.S3_ENDPOINT_URL,
-            "region_name": settings.S3_REGION,
-            "aws_access_key_id": settings.S3_ACCESS_KEY_ID,
-            "aws_secret_access_key": settings.S3_SECRET_ACCESS_KEY,
-        }
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _executor, self.generate_presigned_url_sync, s3_key, expires_in
+        )
 ```
 
-> **Замечание:** воркеры RQ работают в синхронном контексте. Для вызовов из `tasks.py` использовать синхронные обертки через `boto3` (не `aioboto3`) или `asyncio.run()`. Выбрать единообразно по кодовой базе.
+> **Стратегия S3-клиентов:** проект использует единый синхронный `boto3` во всем коде. В FastAPI-эндпоинтах `StorageService` вызывается через `asyncio.run_in_executor(None, ...)`, чтобы не блокировать event loop. В `tasks.py` (RQ-воркер) — вызывается напрямую. Это устраняет неоднозначность и N+1 подключений.
 
 ### 4.2. `converter_service.py` — алгоритм выбора очереди
 
@@ -574,6 +658,11 @@ WORKER_MAX_JOBS=50
 
 # Docling (путь к кешу ML-моделей)
 DOCLING_ARTIFACTS_PATH=/app/.docling
+
+# Docling / HuggingFace (офлайн-режим: модели должны быть в Docker-образе, интернет запрещен)
+HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1
+HUGGINGFACE_HUB_VERBOSITY=error
 ```
 
 ---
@@ -602,5 +691,5 @@ DOCLING_ARTIFACTS_PATH=/app/.docling
 
 - [`TECH.md`](./TECH.md) — Single Source of Truth: схема БД, API контракты, SSE формат
 - [`AGENTS.md`](../AGENTS.md) — правила разработки, `CONTRACT GAP` процедура
-- **Предыдущий срез:** Slice 0 (Foundation) — монорепозиторий и инфраструктура
+- [`SLICE-00.md`](./SLICE-00.md) (Foundation) — монорепозиторий и инфраструктура
 - **Следующий срез:** Slice 2 (Auth & UX) — интерфейс конвертера, Passwordless вход
