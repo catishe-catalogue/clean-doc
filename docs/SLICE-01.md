@@ -689,7 +689,7 @@ HUGGINGFACE_HUB_VERBOSITY=error
 
 ## 13. Связанные документы
 
-- [`TECH.md`](./TECH.md) — Single Source of Truth: схема БД, API контракты, SSE формат
-- [`AGENTS.md`](../AGENTS.md) — правила разработки, `CONTRACT GAP` процедура
-- [`SLICE-00.md`](./SLICE-00.md) (Foundation) — монорепозиторий и инфраструктура
+- [Single Source of Truth (`TECH.md`)](./TECH.md) — схема БД, API контракты, SSE формат
+- [Регламент разработки (`AGENTS.md`)](../AGENTS.md) — правила разработки, `CONTRACT GAP` процедура
+- [Спецификация Slice 0: Foundation (`SLICE-00.md`)](./SLICE-00.md) — монорепозиторий и инфраструктура
 - **Следующий срез:** Slice 2 (Auth & UX) — интерфейс конвертера, Passwordless вход
