@@ -1,10 +1,10 @@
 # Техническая спецификация проекта «Чистый документ»
 
-> **Статус документа:** Действующий / Single Source of Truth  
-> **Версия:** 0.1  
-> **Дата фиксации:** 14 октября 2026 г.  
-> **Домен проекта:** `clean-doc.ru` / `чистыйдокумент.рф`  
-> **Язык спецификации:** Русский (технические идентификаторы, схемы БД, OpenAPI, переменные окружения и логи — на английском языке)  
+> **Статус документа:** Действующий / Single Source of Truth
+> **Версия:** v0.2
+> **Дата фиксации:** 14 октября 2026 г.
+> **Домен проекта:** `clean-doc.ru` / `чистыйдокумент.рф`
+> **Язык спецификации:** Русский (технические идентификаторы, схемы БД, OpenAPI, переменные окружения и логи — на английском языке)
 
 ---
 
@@ -13,7 +13,7 @@
 Настоящий документ является исчерпывающей технической спецификацией (Single Source of Truth) архитектуры, протоколов взаимодействия, моделей данных и процесса разработки микро-SaaS сервиса **«Чистый документ»**.
 
 1. **Обязательность следования:** Любая разработка в репозитории ведется в строгом соответствии с контрактами, зафиксированными в разделах 4, 5, 6, 7 и 8.
-2. **Принцип неизменяемости контрактов:** Никакие неявные поля, временные заглушки, недекларированные HTTP-заголовки или модифицированные типы данных не допускаются без прохождения процедуры **CONTRACT GAP** (см. [`docs/AGENTS.md`](./AGENTS.md)).
+2. **Принцип неизменяемости контрактов:** Никакие неявные поля, временные заглушки, недекларированные HTTP-заголовки или модифицированные типы данных не допускаются без прохождения процедуры **CONTRACT GAP** (см. [`AGENTS.md`](../AGENTS.md)).
 3. **Разделение ответственности:**
    - Разделы 1–3 фиксируют контекст продукта, архитектурный стек и структуру репозитория.
    - Разделы 4–7 задают жесткие контракты данных: схемы БД (PostgreSQL), публичный REST API (FastAPI), Server-Sent Events (SSE) для статуса задач и очереди RQ.
@@ -40,7 +40,8 @@
   - Тариф Free: до 10 МБ, максимум 10 страниц на документ.
   - Тариф PRO / Бизнес: до 100 МБ, максимум 250 страниц на документ.
 - Файлы хранятся во временном хранилище строго 2 часа с момента загрузки, после чего безвозвратно удаляются автоматической политикой S3 Lifecycle.
-- Аутентификация без паролей: Telegram Login Widget + одноразовый Magic Link / 6-значный код на Email.
+- Аутентификация без паролей: Telegram Login Widget + одноразовый Magic Link на Email (письмо содержит и кликабельную ссылку, и 6-значный числовой код — пользователь использует тот способ, который удобен).
+- Сессия: access JWT хранится в памяти JS-клиента (Zustand store, 15 минут TTL); refresh token — в `HttpOnly; Secure; SameSite=Strict` cookie (7 дней TTL). Обновление access токена происходит автоматически через `/auth/refresh`.
 - Оплата: ЮKassa (карты РФ, СБП, рекуррент) для физлиц и ИП; генерация PDF-счета с автозаполнением реквизитов по ИНН через DaData для юрлиц.
 
 ### 1.3. Границы функциональности (Out of Scope для MVP)
@@ -48,7 +49,7 @@
 - Встроенный веб-редактор текста внутри браузера (выдача результата производится только в виде готового файла на скачивание).
 - Мобильные нативные приложения (iOS / Android) — только адаптивная веб-версия.
 - Командные аккаунты с разграничением ролей (Multi-seat RBAC). Один аккаунт = один вход.
-- Прямая интеграция с 1С через SOAP/COM (доступна интеграция только через REST API в тарифе PRO).
+- Прямая интеграция с 1С через SOAP/COM (доступна интеграция только через REST API в тарифе PRO — токены генерируются в личном кабинете через таблицу `app_tokens`, добавляется в Slice 3).
 - Зарубежные платежные шлюзы (Stripe, PayPal) — продукт ориентирован строго на рынок РФ и СНГ.
 
 ### 1.4. Тарифная сетка
@@ -58,7 +59,7 @@
 | **Стоимость** | 0 ₽ | 1 490 ₽/мес или 11 900 ₽/год |
 | **Лимит файлов** | 3 конвертации в день (1 анонимно + 2 после логина) | Без ограничений (до 500 в день по fair use) |
 | **Максимальный размер** | До 10 МБ | До 100 МБ |
-| **OCR (распознавание сканов)** | Нет (или превью первых 2 страниц) | Полный OCR на базе PaddleOCR |
+| **OCR (распознавание сканов)** | Нет (только превью первых 2 страниц) | Полный OCR на базе встроенного движка Docling (EasyOCR + Tesseract) |
 | **Многостраничные файлы** | Полное скачивание до 2 страниц (далее превью) | Без ограничений (до 250 страниц) |
 | **Приоритет в очереди** | Стандартный (очередь `fast`/`heavy`) | Высокий (приоритетная очередь `priority`) |
 | **Оплата для юрлиц** | Недоступно | Оплата по счету от ИП/ООО, закрывающие акты |
@@ -81,7 +82,7 @@
 | **Backend Framework** | Python / FastAPI | Python 3.12+, FastAPI 0.115+ | Асинхронный высокопроизводительный фреймворк, встроенная валидация Pydantic v2, автогенерация схемы OpenAPI 3.1. |
 | **Очереди задач** | RQ (Redis Queue) | RQ 2.0+, Redis 7.2+ | Легковесная чисто питоновская очередь без избыточности Celery, простая изоляция процессов воркеров. |
 | **Движок парсинга PDF** | Docling + PyMuPDF | Docling 2.0+, PyMuPDF 1.24+ | State-of-the-art сохранение табличной верстки и колонок по координатным сеткам. |
-| **OCR модуль** | PaddleOCR / Tesseract | PaddleOCR 2.8+ | Высокое качество оптического распознавания русскоязычных сканов и печатей на CPU. |
+| **OCR модуль** | Docling (встроенный EasyOCR + Tesseract) | Docling 2.0+ | Docling 2.0 включает встроенную OCR-цепочку (EasyOCR/Tesseract), отдельный PaddleOCR не требуется. Снижает вес Docker-образа воркера на ~1.5 ГБ. |
 | **Нарезка превью** | `qpdf` CLI | qpdf 11+ | Молниеносная нарезка первых 2 страниц без расхода оперативной памяти Python. |
 | **СУБД** | PostgreSQL | 16 | Реляционная целостность, поддержка UUIDv4, транзакции для биллинга и счетов. |
 | **Миграции БД** | Alembic | 1.13+ | Стандарт версионирования схемы базы данных для Python. |
@@ -95,6 +96,8 @@
 | **B2B реквизиты** | DaData API | REST API | Автозаполнение наименования, КПП, ОГРН и адреса юрлица по одному ИНН. |
 | **Веб-сервер / Прокси** | Caddy v2 | Caddy 2.8+ | Автоматический выпуск и продление SSL-сертификатов Let's Encrypt, TLS 1.3, обратный прокси к Uvicorn и Next.js. |
 | **Пакетный менеджер** | `uv` (Astral) | uv 0.4+ | Сверхбыстрая установка зависимостей и детерминированная фиксация `uv.lock`. |
+| **Rate Limiting** | `slowapi` | slowapi 0.1+ | Декораторный rate limiter поверх Starlette/FastAPI, хранит счетчики в Redis. Простая интеграция без кастомной сборки Caddy. |
+| **Мониторинг** | Prometheus + Grafana | Prometheus 2.50+, Grafana 10+ | Метрики FastAPI через `prometheus-fastapi-instrumentator`; Grafana-дашборды в Docker Compose. |
 
 ---
 
@@ -223,12 +226,26 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Таблица refresh-токенов (для беспарольной аутентификации)
+-- Хранит SHA-256 хеш токена. Сам токен выдается клиенту в HttpOnly Cookie.
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,  -- SHA-256(raw_token)
+    expires_at TIMESTAMPTZ NOT NULL,   -- NOW() + 7 days
+    revoked BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Таблица учета суточных конвертаций (для защиты Free-тарифа)
+-- Правила идентификации анонимов:
+--   1) если fingerprint не NULL — лимит по (fingerprint, ip_subnet, usage_date)
+--   2) если fingerprint NULL (в редких случаях) — лимит по (ip_subnet, usage_date)
 CREATE TABLE IF NOT EXISTS daily_usage (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    fingerprint TEXT,
-    ip_subnet TEXT NOT NULL,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,  -- NULL для анонимов
+    fingerprint TEXT,          -- client-side browser fingerprint (FingerprintJS)
+    ip_subnet TEXT NOT NULL,   -- /24 подсеть (фолбэк, если fingerprint пустой)
     usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
     conversion_count INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -262,11 +279,13 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     plan TEXT NOT NULL CHECK (plan IN ('pro')),
     billing_period TEXT NOT NULL CHECK (billing_period IN ('month', 'year')),
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'past_due', 'cancelled')),
-    yukassa_payment_id TEXT UNIQUE,
-    yukassa_payment_method_id TEXT,
+    yukassa_payment_id TEXT UNIQUE,           -- ID последнего платежа
+    yukassa_payment_method_id TEXT,            -- для рекуррентных списаний
     amount_rub INT NOT NULL,
     current_period_start TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     current_period_end TIMESTAMPTZ NOT NULL,
+    next_billing_at TIMESTAMPTZ,               -- когда cron-воркер должен списать (= current_period_end - 1 час)
+    retry_count INT NOT NULL DEFAULT 0,        -- счетчик повторных попыток при past_due (макс. 3)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -286,6 +305,19 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Таблица API-токенов (для интеграции PRO через REST API, Slice 3)
+CREATE TABLE IF NOT EXISTS app_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,                        -- пользовательское название ("Мой 1С-клиент")
+    token_hash TEXT NOT NULL UNIQUE,           -- SHA-256(raw_token), raw выдается один раз
+    scopes TEXT[] NOT NULL DEFAULT '{convert}', -- набор разрешений: 'convert', 'status'
+    last_used_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,                    -- NULL = бессрочный
+    revoked BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Индексы производительности
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_telegram ON users(telegram_id);
@@ -293,7 +325,10 @@ CREATE INDEX IF NOT EXISTS idx_jobs_user_status ON conversion_jobs(user_id, stat
 CREATE INDEX IF NOT EXISTS idx_jobs_expires ON conversion_jobs(expires_at) WHERE status = 'completed';
 CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(usage_date);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_billing ON subscriptions(next_billing_at) WHERE status IN ('active', 'past_due');
 CREATE INDEX IF NOT EXISTS idx_invoices_user ON b2b_invoices(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash) WHERE revoked = FALSE;
+CREATE INDEX IF NOT EXISTS idx_app_tokens_hash ON app_tokens(token_hash) WHERE revoked = FALSE;
 ```
 
 ### 4.2. Pydantic v2 схемы (Бэкенд модели)
@@ -390,10 +425,11 @@ export interface ApiError {
 
 | Метод | Путь | Описание | Доступ |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/auth/magic-link` | Запрос 6-значного кода / ссылки на Email | Публичный |
-| `POST` | `/auth/verify-code` | Подтверждение кода из почты и получение JWT | Публичный |
-| `POST` | `/auth/telegram` | Авторизация через Telegram Login Widget хэш | Публичный |
-| `POST` | `/auth/logout` | Сброс сессии и cookie токена | Авторизованный |
+| `POST` | `/auth/magic-link` | Запрос письма с Magic Link и 6-значным кодом | Публичный |
+| `POST` | `/auth/verify-code` | Подтверждение кода или токена из ссылки; выдает access JWT + refresh cookie | Публичный |
+| `POST` | `/auth/telegram` | Авторизация через Telegram Login Widget хэш; выдает access JWT + refresh cookie | Публичный |
+| `POST` | `/auth/refresh` | Обновление access JWT по refresh cookie; выдает новый access JWT | Публичный |
+| `POST` | `/auth/logout` | Отзыв refresh token в БД, сброс HttpOnly cookie | Авторизованный |
 | `GET` | `/auth/me` | Получение профиля текущего пользователя | Авторизованный |
 
 ### 5.2. Конвертация файлов (`/api/v1/convert`)
@@ -417,8 +453,9 @@ export interface ApiError {
 
 #### 2. Real-time стриминг прогресса: `GET /convert/jobs/{job_id}/stream`
 
-- **Протокол:** HTTP/2 Server-Sent Events (`text/event-stream`).
-- **Заголовки ответа:** `Cache-Control: no-cache`, `Connection: keep-alive`, `X-Accel-Buffering: no`.
+- **Протокол:** Server-Sent Events (`text/event-stream`).
+- **Заголовки ответа:** `Cache-Control: no-cache`, `Connection: keep-alive`, `Flush: true` (Caddy-директива: `flush_interval -1` в Caddyfile для upstream FastAPI).
+- **Механизм push:** воркер публикует обновления через `Redis PUBLISH job:{job_id}:progress <json>`; SSE-хендлер подписывается через `SUBSCRIBE` и пересылает сообщения клиенту.
 - **Формат сообщений SSE:**
 
 ```text
@@ -454,6 +491,8 @@ data: {"job_id":"8fa8b7d2-7c3e-4b42-9a5c-7b2a59a72190","status":"completed","pro
 1. **Очередь `priority`:** Задачи пользователей с тарифом PRO. Обрабатываются в первую очередь.
 2. **Очередь `fast`:** Документы до 5 страниц с текстовым слоем от Free-пользователей.
 3. **Очередь `heavy`:** Документы со сканами, требующие OCR, и объемные пакеты страниц.
+
+**Топология воркеров:** запускается **один** процесс `rq worker`, слушающий все 3 очереди по приоритету. В Slice 4 (нагрузочное тестирование) можно масштабировать до 2-3 реплик с разделением heavy отдельно.
 
 ### 6.2. Жизненный цикл воркера и защита от OOM
 
@@ -507,12 +546,18 @@ data: {"job_id":"8fa8b7d2-7c3e-4b42-9a5c-7b2a59a72190","status":"completed","pro
 
 - Интеграция по протоколу API v3.
 - Передача объекта `receipt` для соблюдения требований 54-ФЗ (чеки отправляются на email плательщика).
-- Сохранение `payment_method_id` для автоматического продления ежемесячной подписки через рекуррентные безакцептные списания.
+- **Валидация вебхука:** подпись проверяется через официальный `yukassa_sdk` (встроенная криптография SHA-256 HMAC). Самостоятельная реализация проверки запрещена.
+- **Рекуррентные списания:** через `yukassa_payment_method_id`; cron-воркер (RQ Scheduler) запускает списание за 1 час до `next_billing_at`; при отказе статус → `past_due`, `retry_count` растет; после 3 попыток подписка переходит в `cancelled`.
 
 ### 8.3. Реестр юрлиц (DaData API)
 
 - Используется метод `POST https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party`.
 - По ИНН за 200 мс извлекаются: полное наименование компании, КПП, ОГРН, юридический адрес и ФИО генерального директора.
+
+### 8.4. Telegram
+
+- **Login Widget:** вход пользователя через Telegram Login Widget (HMAC-SHA256 валидация полученных параметров).
+- **Notification Bot (админ):** бот отправляет алерты в приватный чат админа (TELEGRAM_ADMIN_CHAT_ID): новый платящий пользователь, ошибка конвертации (job со статусом `failed`), высокая нагрузка очереди.
 
 ---
 
@@ -539,7 +584,7 @@ data: {"job_id":"8fa8b7d2-7c3e-4b42-9a5c-7b2a59a72190","status":"completed","pro
 flowchart TB
     Client["Клиент (Браузер)"]
 
-    Caddy["Caddy v2<br/>(SSL Let's Encrypt, Rate-Limit, Gzip)"]
+    Caddy["Caddy v2<br/>(SSL Let's Encrypt, Gzip, flush_interval -1)"]
 
     Frontend["Frontend<br/>(Next.js 14)"]
     FastAPI["FastAPI Web<br/>(:8000)"]
@@ -548,6 +593,8 @@ flowchart TB
     Redis["Redis 7<br/>(Очереди RQ, Pub/Sub SSE)"]
     S3["Selectel S3<br/>(ru-1)"]
     Workers["RQ Workers<br/>(Docling/OCR)"]
+    Prometheus["Prometheus<br/>(:9090)"]
+    Grafana["Grafana<br/>(:3001)"]
 
     Client -->|HTTPS / 443| Caddy
 
@@ -557,8 +604,10 @@ flowchart TB
     FastAPI --> Postgres
     FastAPI --> Redis
     FastAPI --> S3
+    FastAPI -->|"GET /metrics"| Prometheus
 
     Redis --> Workers
+    Prometheus --> Grafana
 ```
 
 ---
@@ -601,16 +650,20 @@ YUKASSA_RETURN_URL=https://clean-doc.ru/dashboard
 # DaData API
 DADATA_API_KEY=your_dadata_api_key
 
-# Telegram Bot (для Login Widget)
+# Telegram Bot (Login Widget + Notification Bot)
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_BOT_USERNAME=CleanDocBot
+TELEGRAM_ADMIN_CHAT_ID=your_admin_chat_id  # ID чата для админских алертов
 
-# Email (SMTP для отправки кодов входа)
+# Email (SMTP для отправки Magic Link + 6-значного кода)
 SMTP_HOST=smtp.yandex.ru
 SMTP_PORT=465
 SMTP_USER=no-reply@clean-doc.ru
 SMTP_PASSWORD=secure_smtp_password
 SMTP_FROM_EMAIL=no-reply@clean-doc.ru
+
+# Prometheus
+PROMETHEUS_ENABLED=true
 ```
 
 ---
@@ -637,7 +690,7 @@ make gate
 
 | Спринт | Сроки | Срез (Slice) | Ключевые результаты (DoD) |
 | :--- | :--- | :--- | :--- |
-| **Спринт 1** | Дни 1–14 | **Slice 0: Foundation** | Монорепозиторий, `docker-compose.yml` (MinIO, Postgres, Redis), `make dev`, `make gate`, базовая модель БД, документация `docs/TECH.md` и `docs/AGENTS.md`. |
+| **Спринт 1** | Дни 1–14 | **Slice 0: Foundation** | Монорепозиторий, `docker-compose.yml` (MinIO, Postgres, Redis), `make dev`, `make gate`, базовая модель БД, документация `docs/TECH.md` и `AGENTS.md`. |
 | **Спринт 2** | Дни 15–28 | **Slice 1: Processing** | Интеграция `Docling`, `qpdf` превью, воркеры RQ, стриминг прогресса по SSE, валидация 20 тестовых PDF актов и таблиц. |
 | **Спринт 3** | Дни 29–42 | **Slice 2: Auth & UX** | Интерфейс конвертера на Next.js 14, Passwordless вход (Telegram + Email), 3-слойная защита Free-тарифа, превью первых 2 страниц. |
 | **Спринт 4** | Дни 43–56 | **Slice 3: Billing & B2B** | Интеграция ЮKassa (карты/СБП), DaData API для генерации счетов по ИНН, автоудаление файлов через 2 часа, оферта и 152-ФЗ. |
