@@ -1,7 +1,7 @@
 # Техническая спецификация проекта «Чистый документ»
 
 > **Статус документа:** Действующий / Single Source of Truth
-> **Версия:** v0.2
+> **Версия:** v0.3
 > **Дата фиксации:** 14 октября 2026 г.
 > **Домен проекта:** `clean-doc.ru` / `чистыйдокумент.рф`
 > **Язык спецификации:** Русский (технические идентификаторы, схемы БД, OpenAPI, переменные окружения и логи — на английском языке)
@@ -84,7 +84,7 @@
 | **Движок парсинга PDF** | Docling + PyMuPDF | Docling 2.0+, PyMuPDF 1.24+ | State-of-the-art сохранение табличной верстки и колонок по координатным сеткам. |
 | **OCR модуль** | Docling (встроенный EasyOCR + Tesseract) | Docling 2.0+ | Docling 2.0 включает встроенную OCR-цепочку (EasyOCR/Tesseract), отдельный PaddleOCR не требуется. Снижает вес Docker-образа воркера на ~1.5 ГБ. |
 | **Нарезка превью** | `qpdf` CLI | qpdf 11+ | Молниеносная нарезка первых 2 страниц без расхода оперативной памяти Python. |
-| **СУБД** | PostgreSQL | 16 | Реляционная целостность, поддержка UUIDv4, транзакции для биллинга и счетов. |
+| **СУБД** | PostgreSQL | 18 | Реляционная целостность, поддержка UUIDv4, транзакции для биллинга и счетов. |
 | **Миграции БД** | Alembic | 1.13+ | Стандарт версионирования схемы базы данных для Python. |
 | **Объектное хранилище** | Selectel S3 (Prod) / MinIO (Dev) | S3 API (ru-1 Selectel) | 100% размещение в РФ (ФЗ-152), автоматические правила Lifecycle для удаления файлов через 2 часа. Локально — MinIO в Docker. |
 | **Транспорт статуса** | Server-Sent Events (SSE) | EventSource API | Однонаправленный стриминг статуса конвертации поверх HTTP/2 без накладных расходов WebSocket. |
@@ -194,12 +194,23 @@ clean-doc/
     docker-compose.yml            # Локальный стек (MinIO, Redis, Postgres, API, Worker)
     docker-compose.prod.yml       # Боевой стек для VDS
     Caddyfile                     # Конфигурация веб-сервера Caddy
+    monitoring/
+      prometheus.yml              # Конфигурация Prometheus (scrape targets)
+      grafana/
+        dashboards/               # JSON-дашборды Grafana (FastAPI, RQ, Postgres)
+        provisioning/             # Auto-provisioning datasource и dashboards
   docs/
     TECH.md                       # Настоящий документ спецификации
-    AGENTS.md                     # Регламент работы разработчиков и AI-агентов
+    SLICE-00.md                   # Спецификация Slice 0: Foundation
+    SLICE-01.md                   # Спецификация Slice 1: Processing
+  scripts/
+    seed_dev_data.py              # Заполнение тестовых данных для локальной разработки
+    check_migrations.py           # Проверка актуальности Alembic ревизий
   Makefile                        # Команды управления: make dev, make gate, make test
-  README.md                       # Описание проекта на русском языке
+  AGENTS.md                       # Регламент работы разработчиков и AI-агентов
+  README.md                       # Описание проекта
   LICENSE                         # Лицензия
+  .gitignore                      # Единый игнор для всего репо
   .markdownlint.yml               # Конфигурация проверки документации
 ```
 
@@ -207,7 +218,7 @@ clean-doc/
 
 ## 4. Контракты данных (Database Schema & Types)
 
-СУБД: **PostgreSQL 16**. Все первичные ключи формируются как `UUID` через `gen_random_uuid()`. Время хранится строго в формате `TIMESTAMPTZ` в шкале UTC.
+СУБД: **PostgreSQL 18**. Все первичные ключи формируются как `UUID` через `gen_random_uuid()`. Время хранится строго в формате `TIMESTAMPTZ` в шкале UTC.
 
 ### 4.1. Схема PostgreSQL (DDL)
 
@@ -241,6 +252,8 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 -- Правила идентификации анонимов:
 --   1) если fingerprint не NULL — лимит по (fingerprint, ip_subnet, usage_date)
 --   2) если fingerprint NULL (в редких случаях) — лимит по (ip_subnet, usage_date)
+-- Внимание: NULL != NULL в PostgreSQL, поэтому вместо UNIQUE constraint на guest
+-- используются два partial unique index (см. ниже раздел "Индексы производительности").
 CREATE TABLE IF NOT EXISTS daily_usage (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,  -- NULL для анонимов
@@ -249,17 +262,18 @@ CREATE TABLE IF NOT EXISTS daily_usage (
     usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
     conversion_count INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_daily_user UNIQUE(user_id, usage_date),
-    CONSTRAINT uq_daily_guest UNIQUE(fingerprint, ip_subnet, usage_date)
+    CONSTRAINT uq_daily_user UNIQUE(user_id, usage_date)
 );
 
 -- Таблица задач конвертации
 CREATE TABLE IF NOT EXISTS conversion_jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    session_token_hash TEXT,                               -- SHA-256(job_id + ip + UA) для анонимов
     target_format TEXT NOT NULL CHECK (target_format IN ('docx', 'xlsx')),
     original_filename TEXT NOT NULL,
     file_size_bytes BIGINT NOT NULL,
+    sha256_checksum TEXT,                                  -- SHA-256 входного PDF (для дедупликации)
     page_count INT,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'queued', 'processing', 'completed', 'failed')),
     s3_input_key TEXT NOT NULL,
@@ -323,12 +337,17 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_telegram ON users(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_user_status ON conversion_jobs(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_jobs_expires ON conversion_jobs(expires_at) WHERE status = 'completed';
+CREATE INDEX IF NOT EXISTS idx_jobs_checksum ON conversion_jobs(sha256_checksum) WHERE sha256_checksum IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(usage_date);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_billing ON subscriptions(next_billing_at) WHERE status IN ('active', 'past_due');
 CREATE INDEX IF NOT EXISTS idx_invoices_user ON b2b_invoices(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash) WHERE revoked = FALSE;
 CREATE INDEX IF NOT EXISTS idx_app_tokens_hash ON app_tokens(token_hash) WHERE revoked = FALSE;
+-- Partial unique index для анонимных гостей с fingerprint (NULL != NULL в PostgreSQL)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_guest_fp ON daily_usage(fingerprint, ip_subnet, usage_date) WHERE fingerprint IS NOT NULL;
+-- Partial unique index для анонимных гостей без fingerprint (фолбэк по ip_subnet)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_guest_ip ON daily_usage(ip_subnet, usage_date) WHERE fingerprint IS NULL;
 ```
 
 ### 4.2. Pydantic v2 схемы (Бэкенд модели)
@@ -421,6 +440,15 @@ export interface ApiError {
 
 Базовый префикс всех эндпоинтов: `/api/v1`.
 
+### 5.0. Служебные эндпоинты (`/api/v1`)
+
+| Метод | Путь | Описание | Доступ |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/health` | Liveness probe — всегда возвращает `200 OK {"status": "ok"}` | Публичный |
+| `GET` | `/ready` | Readiness probe — проверяет доступность PostgreSQL и Redis; возвращает `503` если одна из зависимостей недоступна | Публичный |
+
+> **Caddy / Docker:** healthcheck контейнеров FastAPI настраивается через `GET /api/v1/health`. Readiness probe `/ready` используется в `depends_on` условиях Docker Compose и балансировщике нагрузки.
+
 ### 5.1. Аутентификация (`/api/v1/auth`)
 
 | Метод | Путь | Описание | Доступ |
@@ -468,7 +496,11 @@ data: {"job_id":"8fa8b7d2-7c3e-4b42-9a5c-7b2a59a72190","status":"completed","pro
 
 #### 3. Скачивание результата: `GET /convert/jobs/{job_id}/download`
 
-- **Ответ:** Редирект `307 Temporary Redirect` на подписанный pre-signed S3 URL с ограниченным сроком жизни (15 минут) и заголовком `Content-Disposition: attachment; filename="document.docx"`.
+- **Авторизация доступа к файлу:**
+  - Авторизованный пользователь: сравнивается `job.user_id == current_user.id`.
+  - Анонимный пользователь: при загрузке файла формируется `session_token_hash = SHA-256(job_id + ip + User-Agent)` и сохраняется в поле `conversion_jobs.session_token_hash`, а сам токен — в `HttpOnly` cookie `anon_session` (TTL 2 часа). Эндпоинт проверяет совпадение cookie с `session_token_hash`.
+  - Нарушение: `403 ACCESS_DENIED`.
+- **Ответ:** Редирект `307 Temporary Redirect` на подписанный pre-signed S3 URL с ограниченным сроком жизни (15 минут) и заголовком `Content-Disposition: attachment; filename="{original_filename_without_ext}.{target_format}"`.
 
 ### 5.3. Биллинг и B2B счета (`/api/v1/billing`)
 
@@ -584,13 +616,13 @@ data: {"job_id":"8fa8b7d2-7c3e-4b42-9a5c-7b2a59a72190","status":"completed","pro
 flowchart TB
     Client["Клиент (Браузер)"]
 
-    Caddy["Caddy v2<br/>(SSL Let's Encrypt, Gzip, flush_interval -1)"]
+    Caddy["Caddy<br/>(SSL Let's Encrypt, Gzip, flush_interval -1)"]
 
     Frontend["Frontend<br/>(Next.js 14)"]
     FastAPI["FastAPI Web<br/>(:8000)"]
 
-    Postgres["PostgreSQL 16<br/>(Данные/Счета)"]
-    Redis["Redis 7<br/>(Очереди RQ, Pub/Sub SSE)"]
+    Postgres["PostgreSQL<br/>(Данные/Счета)"]
+    Redis["Redis<br/>(Очереди RQ, Pub/Sub SSE)"]
     S3["Selectel S3<br/>(ru-1)"]
     Workers["RQ Workers<br/>(Docling/OCR)"]
     Prometheus["Prometheus<br/>(:9090)"]
@@ -657,13 +689,19 @@ TELEGRAM_ADMIN_CHAT_ID=your_admin_chat_id  # ID чата для админски
 
 # Email (SMTP для отправки Magic Link + 6-значного кода)
 SMTP_HOST=smtp.yandex.ru
-SMTP_PORT=465
+SMTP_PORT=587
+SMTP_USE_TLS=true
 SMTP_USER=no-reply@clean-doc.ru
 SMTP_PASSWORD=secure_smtp_password
 SMTP_FROM_EMAIL=no-reply@clean-doc.ru
 
 # Prometheus
 PROMETHEUS_ENABLED=true
+
+# Docling / HuggingFace (офлайн-режим в prod: модели должны быть в образе)
+HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1
+HUGGINGFACE_HUB_VERBOSITY=error
 ```
 
 ---
