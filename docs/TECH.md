@@ -1,8 +1,8 @@
 # Техническая спецификация проекта «Чистый документ»
 
 > **Статус документа:** Действующий / Single Source of Truth
-> **Версия:** v0.3
-> **Дата фиксации:** 14 октября 2026 г.
+> **Версия:** v0.4
+> **Дата фиксации:** 15 октября 2026 г.
 > **Домен проекта:** `clean-doc.ru` / `чистыйдокумент.рф`
 > **Язык спецификации:** Русский (технические идентификаторы, схемы БД, OpenAPI, переменные окружения и логи — на английском языке)
 
@@ -233,6 +233,12 @@ CREATE TABLE IF NOT EXISTS users (
     telegram_id BIGINT UNIQUE,
     telegram_username TEXT,
     plan TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'pro')),
+    -- Magic Link / Email OTP (хранится SHA-256 хеша кода, TTL 15 минут)
+    magic_code_hash TEXT,                          -- SHA-256(6-digit-code), очищается после использования
+    magic_code_expires_at TIMESTAMPTZ,             -- NOW() + 15 min
+    -- Защита от брутфорса и административная блокировка
+    is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+    magic_code_attempts INT NOT NULL DEFAULT 0,    -- счетчик неудачных попыток ввода кода (сброс при успехе)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -273,15 +279,16 @@ CREATE TABLE IF NOT EXISTS conversion_jobs (
     target_format TEXT NOT NULL CHECK (target_format IN ('docx', 'xlsx')),
     original_filename TEXT NOT NULL,
     file_size_bytes BIGINT NOT NULL,
-    sha256_checksum TEXT,                                  -- SHA-256 входного PDF (для дедупликации)
-    page_count INT,
+    sha256_checksum TEXT,                                  -- SHA-256 входного PDF (для дедупликации по БД)
+    page_count INT,                                        -- NULL до обработки; заполняется воркером после qpdf
+    usage_date DATE NOT NULL DEFAULT CURRENT_DATE,         -- дата создания задачи (для дедупликации в пределах суток)
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'queued', 'processing', 'completed', 'failed')),
     s3_input_key TEXT NOT NULL,
     s3_output_key TEXT,
-    s3_preview_keys JSONB DEFAULT '[]'::jsonb,
+    s3_preview_keys JSONB DEFAULT '[]'::jsonb,             -- ключи S3 JPEG-превью страниц (генерирует воркер через PyMuPDF)
     error_message TEXT,
     is_preview_only BOOLEAN NOT NULL DEFAULT FALSE,
-    processing_seconds NUMERIC(6, 2),
+    processing_seconds NUMERIC(8, 3),                      -- время обработки воркером в секундах (до 99999 с)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '2 hours')
 );
@@ -337,7 +344,9 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_telegram ON users(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_user_status ON conversion_jobs(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_jobs_expires ON conversion_jobs(expires_at) WHERE status = 'completed';
-CREATE INDEX IF NOT EXISTS idx_jobs_checksum ON conversion_jobs(sha256_checksum) WHERE sha256_checksum IS NOT NULL;
+-- Составной индекс для PostgreSQL-дедупликации по (user_id, sha256, дата). Заменяет Redis SET-подход.
+CREATE INDEX IF NOT EXISTS idx_jobs_dedup ON conversion_jobs(user_id, sha256_checksum, usage_date)
+    WHERE sha256_checksum IS NOT NULL AND status IN ('processing', 'completed');
 CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(usage_date);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_billing ON subscriptions(next_billing_at) WHERE status IN ('active', 'past_due');
@@ -460,7 +469,11 @@ export interface ApiError {
 | `POST` | `/auth/logout` | Отзыв refresh token в БД, сброс HttpOnly cookie | Авторизованный |
 | `GET` | `/auth/me` | Получение профиля текущего пользователя | Авторизованный |
 
+> **Защита от брутфорса Magic Link кода:** `POST /auth/verify-code` ограничен `slowapi` до **5 попыток в час по IP**. При 5 неудачных попытках подряд поле `magic_code_attempts` в `users` достигает лимита и код инвалидируется. Поле `is_blocked` выставляется вручную администратором для полной блокировки аккаунта.
+
 ### 5.2. Конвертация файлов (`/api/v1/convert`)
+
+> **Rate Limiting на upload:** Caddy применяет `rate_limit /api/v1/convert/upload 20r/m` на первом уровне (защита от DDoS до входа в Python). `slowapi` применяет дополнительный лимит 10 req/min по user_id или IP на уровне FastAPI.
 
 #### 1. Загрузка файла и инициализация: `POST /convert/upload`
 
@@ -469,6 +482,7 @@ export interface ApiError {
   - `file`: бинарные данные PDF (валидация Magic Bytes `%PDF-`).
   - `target_format`: строка `docx` или `xlsx`.
   - `fingerprint`: опциональная строка отпечатка браузера.
+- **Дедупликация:** перед постановкой в очередь выполняется `SELECT` по `(user_id, sha256_checksum, usage_date)` со статусом `processing`/`completed` через индекс `idx_jobs_dedup`. При совпадении возвращается существующий `job_id` без создания новой задачи.
 - **Ответ при успехе (202 Accepted):**
 
 ```json
@@ -479,11 +493,21 @@ export interface ApiError {
 }
 ```
 
-#### 2. Real-time стриминг прогресса: `GET /convert/jobs/{job_id}/stream`
+#### 2. Снапшот статуса задачи: `GET /convert/jobs/{job_id}`
+
+- **Назначение:** Polling fallback — получить текущий статус задачи из PostgreSQL без подписки на SSE. Фронтенд обязан вызывать этот эндпоинт при открытии SSE-соединения позже момента создания задачи.
+- **Ответ (200 OK):** JSON в формате `JobStatusResponse` (см. раздел 4.2).
+- **Ошибки:** `404 JOB_NOT_FOUND` если задача не найдена или истёк `expires_at`.
+
+#### 3. Real-time стриминг прогресса: `GET /convert/jobs/{job_id}/stream`
 
 - **Протокол:** Server-Sent Events (`text/event-stream`).
 - **Заголовки ответа:** `Cache-Control: no-cache`, `Connection: keep-alive`, `Flush: true` (Caddy-директива: `flush_interval -1` в Caddyfile для upstream FastAPI).
 - **Механизм push:** воркер публикует обновления через `Redis PUBLISH job:{job_id}:progress <json>`; SSE-хендлер подписывается через `SUBSCRIBE` и пересылает сообщения клиенту.
+- **Keepalive:** хендлер отправляет комментарий `': keepalive'` каждые **15 секунд** при отсутствии событий от воркера. Это предотвращает разрыв соединения прокси-серверами.
+- **Алгоритм подключения на клиенте:**
+  1. Клиент вызывает `GET /convert/jobs/{job_id}` — если статус `completed`/`failed`, SSE не открывается.
+  2. Иначе клиент открывает SSE-соединение и слушает события.
 - **Формат сообщений SSE:**
 
 ```text
@@ -492,9 +516,11 @@ data: {"job_id":"8fa8b7d2-7c3e-4b42-9a5c-7b2a59a72190","status":"processing","pr
 
 event: complete
 data: {"job_id":"8fa8b7d2-7c3e-4b42-9a5c-7b2a59a72190","status":"completed","progress_percent":100,"current_step":"Готово к скачиванию","download_url":"/api/v1/convert/jobs/8fa8b7d2-7c3e-4b42-9a5c-7b2a59a72190/download","is_preview_only":false}
+
+: keepalive
 ```
 
-#### 3. Скачивание результата: `GET /convert/jobs/{job_id}/download`
+#### 4. Скачивание результата: `GET /convert/jobs/{job_id}/download`
 
 - **Авторизация доступа к файлу:**
   - Авторизованный пользователь: сравнивается `job.user_id == current_user.id`.
@@ -502,7 +528,15 @@ data: {"job_id":"8fa8b7d2-7c3e-4b42-9a5c-7b2a59a72190","status":"completed","pro
   - Нарушение: `403 ACCESS_DENIED`.
 - **Ответ:** Редирект `307 Temporary Redirect` на подписанный pre-signed S3 URL с ограниченным сроком жизни (15 минут) и заголовком `Content-Disposition: attachment; filename="{original_filename_without_ext}.{target_format}"`.
 
-### 5.3. Биллинг и B2B счета (`/api/v1/billing`)
+### 5.3. Профиль пользователя (`/api/v1/users`)
+
+| Метод | Путь | Описание | Доступ |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/users/me/conversions` | История конвертаций за текущие сутки (до 50 записей, сортировка по `created_at DESC`) | Авторизованный |
+
+> **Используется на странице `/dashboard`** для отображения истории за 24 часа. Возвращает массив объектов `JobStatusResponse`.
+
+### 5.4. Биллинг и B2B счета (`/api/v1/billing`)
 
 | Метод | Путь | Описание | Формат тела |
 | :--- | :--- | :--- | :--- |
@@ -528,9 +562,9 @@ data: {"job_id":"8fa8b7d2-7c3e-4b42-9a5c-7b2a59a72190","status":"completed","pro
 
 ### 6.2. Жизненный цикл воркера и защита от OOM
 
-- Запуск воркера: `rq worker priority fast heavy --max-jobs=50`.
+- Запуск воркера: `rq worker priority fast heavy --max-jobs=${WORKER_MAX_JOBS:-50}`. Значение берётся из переменной окружения `WORKER_MAX_JOBS` (класс `Settings`, default=50).
 - Ограничение памяти в Docker: `mem_limit: 4g`.
-- При достижении 50 задач процесс воркера мягко завершается, освобождая оперативную память ОС от фрагментаций PyTorch, и автоматически перезапускается Docker демоном (`restart: unless-stopped`).
+- При достижении `WORKER_MAX_JOBS` задач процесс воркера мягко завершается, освобождая оперативную память ОС от фрагментаций PyTorch, и автоматически перезапускается Docker демоном (`restart: unless-stopped`).
 - Максимальный таймаут задачи (`job_timeout`): 180 секунд. При превышении статус переводится в `failed` с ошибкой клиенту: *«Время обработки превышено. Документ слишком сложен для автоматической обработки»*.
 
 ---
@@ -598,6 +632,7 @@ data: {"job_id":"8fa8b7d2-7c3e-4b42-9a5c-7b2a59a72190","status":"completed","pro
 - **Фреймворк:** Next.js 14 с парадигмой Server Components по умолчанию. Директива `'use client'` изолирована в интерактивных виджетах.
 - **Адаптивность:** Полная поддержка мобильных экранов (`sm: 640px`, `md: 768px`, `lg: 1024px`).
 - **Дизайн-система:** Строгая черно-бело-синяя палитра с акцентным цветом `#2563EB` (синий), скругления `rounded-xl`, шрифт Inter. Отсутствие рекламы, всплывающих баннеров и отвлекающих элементов.
+- **SSE-клиент алгоритм:** при получении `job_id` фронтенд сначала вызывает `GET /convert/jobs/{id}` — если задача уже завершена, SSE не открывается (устраняет race condition при медленном браузере).
 
 ---
 
@@ -636,11 +671,26 @@ flowchart TB
     FastAPI --> Postgres
     FastAPI --> Redis
     FastAPI --> S3
-    FastAPI -->|"GET /metrics"| Prometheus
+    FastAPI -->|"GET /metrics (internal only)"| Prometheus
 
     Redis --> Workers
     Prometheus --> Grafana
 ```
+
+> **Защита `/metrics`:** эндпоинт Prometheus закрыт для внешнего доступа через Caddy-правило `@internal { remote_ip 172.16.0.0/12 }`. Внешние запросы к `/metrics` отбрасываются с `403`. Данные метрик не выставляются публично.
+
+### 10.3. Требования к VDS для MVP (Production)
+
+| Ресурс | Минимум | Рекомендуемое | Бозновка |
+| :--- | :--- | :--- | :--- |
+| **CPU** | 4 vCPU | 4–8 vCPU | Docling/OCR однопоточно, FastAPI асинхронный |
+| **RAM** | 8 ГБ | 10–12 ГБ | Docling ML-модели ~2-4 ГБ + прочие сервисы ~3 ГБ |
+| **SSD** | 80 ГБ | 100 ГБ | Docker образы + логи + временные файлы |
+| **Сеть** | 100 Мбит/с | 100 Мбит/с+ | загрузка/скачивание файлов через Selectel S3 |
+
+**Ориентировочная пропускная способность:** при `mem_limit: 4g` для воркера и 1 процессе RQ сервер обрабатывает **5–10 параллельных PDF** (воркер однопоточный). SSE-стриминг: FastAPI асинхронно выдерживает до **500 одновременных SSE-соединений** без перегрузки.
+
+**Рекомендуемые провайдеры для РФ:** Selectel Cloud VDS (Selectel, регион ру-1), Timeweb Cloud, Reg.ru VDS. Серверы должны находиться на территории РФ (соответствие 152-ФЗ).
 
 ---
 
@@ -702,6 +752,10 @@ PROMETHEUS_ENABLED=true
 HF_HUB_OFFLINE=1
 TRANSFORMERS_OFFLINE=1
 HUGGINGFACE_HUB_VERBOSITY=error
+
+# Воркер (ограничитель задач до перезапуска, таймаут задачи)
+WORKER_MAX_JOBS=50
+WORKER_JOB_TIMEOUT=180
 ```
 
 ---
