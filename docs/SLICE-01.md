@@ -1,8 +1,8 @@
 # SLICE-01: Processing — Спецификация реализации
 
 > **Статус:** Действующий / Ready for Implementation
-> **Версия:** v0.2
-> **Дата:** 14 октября 2026 г.
+> **Версия:** v0.3
+> **Дата:** 15 октября 2026 г.
 > **Спринт:** 2 (Дни 15–28)
 > **Зависимости:** Slice 0 (Foundation) — монорепозиторий, `docker-compose.yml`, `make gate`, базовые модели БД
 
@@ -82,7 +82,17 @@ async def upload_pdf(file, target_format, fingerprint, request, db, user):
     validate_file_type(file)        # Magic Bytes + MIME
     validate_file_size(file, user)  # 10MB / 100MB
     sha256 = compute_sha256(file)   # SHA-256 входного PDF
-    check_dedup(sha256, user, request, redis_conn)  # Redis SET dedup:{sha256}:{scope} TTL 2h
+
+    # Дедупликация через PostgreSQL (индекс idx_jobs_dedup)
+    # Redis SET-подход не используется: ненадёжен при перезапуске Redis.
+    existing_job = await check_dedup_pg(sha256, user, db)  # SELECT по (user_id, sha256, CURRENT_DATE)
+    if existing_job:
+        return UploadResponse(
+            job_id=existing_job.id,
+            status=existing_job.status,
+            stream_url=f"/api/v1/convert/jobs/{existing_job.id}/stream"
+        )
+
     check_daily_limit(user, fingerprint, request.client.host, db)
 
     s3_key = f"temp/{uuid4()}/input.pdf"
@@ -102,6 +112,7 @@ async def upload_pdf(file, target_format, fingerprint, request, db, user):
         original_filename=file.filename,
         file_size_bytes=file.size,
         sha256_checksum=sha256,
+        usage_date=date.today(),  # заполняется явно для индекса дедупликации
         status="queued",
         s3_input_key=s3_key,
     )
@@ -139,7 +150,26 @@ async def upload_pdf(file, target_format, fingerprint, request, db, user):
 
 ---
 
-### 2.2. `GET /api/v1/convert/jobs/{job_id}/stream`
+### 2.2. `GET /api/v1/convert/jobs/{job_id}`
+
+**Назначение:** Polling fallback — вернуть текущий снапшот статуса задачи без подписки на SSE.
+
+**Алгоритм для клиента:**
+1. Получить `job_id` после `POST /upload`.
+2. Вызвать `GET /jobs/{job_id}` — если `status == 'completed'`/`'failed'`, отобразить результат и не открывать SSE.
+3. Иначе — открыть SSE-стрим для оповещений в реальном времени.
+
+**Ответ (200 OK):** JSON `JobStatusResponse`.
+
+**Ошибки:**
+
+| HTTP | `code` | Условие |
+| :--- | :--- | :--- |
+| `404` | `JOB_NOT_FOUND` | `job_id` не найден или `expires_at` истек |
+
+---
+
+### 2.3. `GET /api/v1/convert/jobs/{job_id}/stream`
 
 **Назначение:** SSE-стриминг прогресса конвертации.
 
@@ -161,8 +191,9 @@ Flush: true
 1. Handler подписывается на Redis-канал `job:{job_id}:progress`.
 2. Воркер публикует JSON-события через `PUBLISH job:{job_id}:progress <json>`.
 3. Handler пересылает каждое сообщение клиенту как SSE-событие.
-4. При закрытии клиентом соединения (`asyncio.CancelledError`) handler вызывает `redis_pubsub.unsubscribe()` и освобождает ресурсы.
-5. Завершающее событие типа `complete` или `error` — handler закрывает соединение после отправки.
+4. **Keepalive:** если в течение **15 секунд** нет событий от воркера, handler отправляет SSE-комментарий `': keepalive'` — предотвращает разрыв Caddy/nginx.
+5. При закрытии клиентом соединения (`asyncio.CancelledError`) handler вызывает `redis_pubsub.unsubscribe()` и освобождает ресурсы.
+6. Завершающее событие типа `complete` или `error` — handler закрывает соединение после отправки.
 
 **Формат SSE-сообщений:**
 
@@ -198,7 +229,7 @@ data: {"job_id":"...","status":"failed","progress_percent":0,"current_step":"О�
 
 ---
 
-### 2.3. `GET /api/v1/convert/jobs/{job_id}/download`
+### 2.4. `GET /api/v1/convert/jobs/{job_id}/download`
 
 **Назначение:** перенаправить на pre-signed S3 URL готового файла.
 
@@ -274,14 +305,30 @@ def parse_and_convert(job_id: UUID) -> None:
 
 ### 3.2. Функция `_render_preview(job_id, input_path) -> list[str]`
 
-```bash
-# CLI команда:
-qpdf input.pdf --pages input.pdf 1-2 -- /tmp/{job_id}/preview.pdf
+**Описание:** воркер генерирует JPEG-снимки первых 2 страниц через **PyMuPDF** (`fitz`). `qpdf` используется только для проверки целостности PDF.
+
+```python
+import fitz  # PyMuPDF
+
+def _render_preview(job_id: UUID, input_path: str) -> list[str]:
+    doc = fitz.open(input_path)
+    page_count = min(len(doc), 2)
+    preview_keys = []
+
+    for i in range(page_count):
+        page = doc[i]
+        pix = page.get_pixmap(dpi=150)
+        img_bytes = pix.tobytes("jpeg")
+
+        s3_key = f"temp/{job_id}/preview_p{i + 1}.jpg"
+        storage_service.upload_bytes_sync(img_bytes, s3_key, content_type="image/jpeg")
+        preview_keys.append(s3_key)
+
+    doc.close()
+    return preview_keys
 ```
 
-- Если документ содержит только 1 страницу — нарезать только её.
-- Загрузить превью-PDF в S3: ключи `temp/{job_id}/preview_p1.pdf`, `temp/{job_id}/preview_p2.pdf`.
-- Вернуть список ключей S3 (максимум 2 элемента).
+> **Формат файлов:** JPEG (не PDF). Ключи в S3: `temp/{job_id}/preview_p1.jpg`, `temp/{job_id}/preview_p2.jpg`. Фронтенд отображает изображения напрямую через `<img>` без CORS-проблем PDF.js. Уровень DPI=150 обеспечивает читаемость при размере ~1000-1200px по ширине.
 
 ### 3.3. Функция `_run_docling(job, input_path) -> str`
 
@@ -302,19 +349,22 @@ def _run_docling(job, input_path: str) -> str:
     return output_path
 ```
 
-### 3.4. Определение `is_preview_only`
+### 3.4. Определение `is_preview_only` и `page_count`
 
 ```python
 def _check_preview_only(job: ConversionJob) -> bool:
     """Только Free-пользователи с документами > 2 страниц получают preview_only."""
     user = get_user_sync(job.user_id)
     user_plan = user.plan if user else "free"
-    page_count = job.page_count or 0
+    # page_count заполняется воркером AFTER qpdf (не NULL)
+    page_count = job.page_count  # актуальное значение после обновления в БД
 
-    if user_plan == "free" and page_count > 2:
+    if user_plan == "free" and page_count is not None and page_count > 2:
         return True
     return False
 ```
+
+> **Контракт `page_count`:** воркер обязан обновить `job.page_count = doc.page_count` в `_render_preview()` до вызова `_check_preview_only()`. Вызов `get_user_sync(None)` (для анонимов) возвращает `user_plan = "free"`.
 
 ---
 
@@ -624,7 +674,7 @@ worker:
   build:
     context: ./backend
     dockerfile: Dockerfile.worker
-  command: rq worker priority fast heavy --max-jobs=50
+  command: rq worker priority fast heavy --max-jobs=${WORKER_MAX_JOBS:-50}
   environment:
     - DATABASE_URL=postgresql+asyncpg://cleandoc:cleandoc@postgres:5432/cleandoc_db
     - REDIS_HOST=redis
@@ -670,19 +720,20 @@ HUGGINGFACE_HUB_VERBOSITY=error
 ## 12. Порядок реализации (рекомендованный)
 
 ```text
-1.  Alembic миграция 0002_conversion_jobs.py
+1.  Alembic миграция 0002_conversion_jobs.py (включая usage_date, idx_jobs_dedup)
 2.  SQLAlchemy модель models/job.py
 3.  Pydantic схемы schemas/convert.py
-4.  storage_service.py (upload, download, presign) + unit-тесты с MinIO
-5.  converter_service.py (валидация Magic Bytes, select_queue, check_daily_limit)
-6.  tasks.py: _render_preview, _run_docling, _check_preview_only
-7.  tasks.py: parse_and_convert (полный пайплайн) + Redis Pub/Sub publish
-8.  worker.py: точка входа rq worker
-9.  convert.py: POST /upload endpoint
-10. convert.py: GET /jobs/{id}/stream endpoint (SSE + Redis SUBSCRIBE)
-11. convert.py: GET /jobs/{id}/download endpoint
-12. Интеграционные тесты: test_convert.py
-13. make gate — полный прогон, ручная проверка на 20 PDF
+4.  storage_service.py (upload, download, presign, upload_bytes_sync) + unit-тесты с MinIO
+5.  converter_service.py (валидация Magic Bytes, select_queue, check_daily_limit, check_dedup_pg)
+6.  tasks.py: _render_preview (JPEG через PyMuPDF), _run_docling, _check_preview_only
+7.  tasks.py: parse_and_convert (полный пайплайн) + Redis Pub/Sub publish + keepalive цикл
+8.  worker.py: точка входа rq worker (читает WORKER_MAX_JOBS из Settings)
+9.  convert.py: POST /upload endpoint (дедупликация через check_dedup_pg)
+10. convert.py: GET /jobs/{id} endpoint (polling fallback)
+11. convert.py: GET /jobs/{id}/stream endpoint (SSE + keepalive + Redis SUBSCRIBE)
+12. convert.py: GET /jobs/{id}/download endpoint
+13. Интеграционные тесты: test_convert.py
+14. make gate — полный прогон, ручная проверка на 20 PDF
 ```
 
 ---
