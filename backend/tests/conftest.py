@@ -1,6 +1,4 @@
-import asyncio
 from collections.abc import AsyncGenerator
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -31,39 +29,39 @@ TestingSessionLocal = async_sessionmaker(
 
 
 @pytest.fixture(scope="session")
-def event_loop() -> Any:
-    """Создает единый event loop для тестовой сессии."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="session")
 async def prepare_test_db() -> AsyncGenerator[None, None]:
-    """Создает схему БД перед прогоном тестов и удаляет после.
+    """Гарантирует наличие схемы БД перед прогоном тестов.
 
-    Не autouse — используется только тестами, которым нужна живая БД.
-    Запускайте make dev перед make test-py для доступности PostgreSQL.
+    Не удаляет таблицы на выходе (drop_all), чтобы не ломать миграции
+    и структуру таблиц в dev-базе. Изоляция данных в каждом тесте
+    обеспечивается автоматическим откатом транзакции (rollback) в фикстуре db_session.
     """
     async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     yield
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
     await test_engine.dispose()
 
 
 @pytest.fixture
 async def db_session(prepare_test_db: None) -> AsyncGenerator[AsyncSession, None]:  # noqa: ARG001
-    """Предоставляет изолированную сессию БД с автоматическим откатом транзакции."""
-    async with TestingSessionLocal() as session:
-        await session.begin()
+    """Предоставляет изолированную сессию БД с автоматическим откатом через savepoint.
+
+    Любые вызовы session.commit() внутри теста фиксируют только точку сохранения (savepoint),
+    а в конце теста внешняя транзакция откатывается, гарантируя полную изоляцию без удаления таблиц.
+    """
+    async with test_engine.connect() as connection:
+        transaction = await connection.begin()
+        session = AsyncSession(
+            bind=connection,
+            join_transaction_mode="create_savepoint",
+            expire_on_commit=False,
+            autoflush=False,
+        )
         try:
             yield session
         finally:
-            await session.rollback()
             await session.close()
+            await transaction.rollback()
 
 
 @pytest.fixture

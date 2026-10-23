@@ -165,5 +165,43 @@ async def test_subscription_check_constraints(db_session: AsyncSession) -> None:
     await db_session.rollback()
 
 
-# Suppress unused imports warning — models used in test scope
-_ = (B2BInvoice,)
+@pytest.mark.asyncio
+async def test_b2b_invoice_creation_and_unique_constraint(db_session: AsyncSession) -> None:
+    """Проверяет создание B2B счета, генерацию UUID и ограничение уникальности invoice_number."""
+    user = User(email="invoice@clean-doc.local")
+    db_session.add(user)
+    await db_session.flush()
+
+    inv1 = B2BInvoice(
+        user_id=user.id,
+        invoice_number="INV-2026-001",
+        inn="7707083893",
+        company_name="ООО Ромашка",
+        company_address="г. Москва, ул. Ленина, д. 1",
+        amount_rub=11900,
+        pdf_s3_key="invoices/INV-2026-001.pdf",
+    )
+    db_session.add(inv1)
+    await db_session.commit()
+    await db_session.refresh(inv1)
+
+    assert isinstance(inv1.id, UUID)
+    assert inv1.status == "pending"
+    assert inv1.kpp is None
+    assert inv1.paid_at is None
+    assert isinstance(inv1.created_at, datetime)
+
+    # Проверка уникальности номера счета
+    inv2_dup = B2BInvoice(
+        user_id=user.id,
+        invoice_number="INV-2026-001",
+        inn="7707083893",
+        company_name="ООО Другая",
+        company_address="г. Москва",
+        amount_rub=11900,
+        pdf_s3_key="invoices/INV-2026-002.pdf",
+    )
+    db_session.add(inv2_dup)
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()

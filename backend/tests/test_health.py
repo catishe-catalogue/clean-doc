@@ -107,3 +107,28 @@ async def test_readiness_storage_down(async_client_no_db: AsyncClient) -> None:
         data = response.json()
         assert data["status"] == "unhealthy"
         assert data["checks"]["storage"] is False
+
+
+@pytest.mark.asyncio
+async def test_global_exception_handler() -> None:
+    """Проверка глобального обработчика ошибок: непредвиденные исключения отдают 500 JSON."""
+    import json
+    from typing import Any
+
+    from starlette.requests import Request
+
+    from app.main import global_exception_handler
+
+    headers: list[tuple[bytes, bytes]] = []
+    scope: dict[str, Any] = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/v1/health",
+        "headers": headers,
+    }
+    request = Request(scope)
+    response = await global_exception_handler(request, RuntimeError("Unexpected server crash"))
+    assert response.status_code == 500
+    data = json.loads(bytes(response.body).decode("utf-8"))
+    assert data["code"] == "INTERNAL_SERVER_ERROR"
+    assert "Внутренняя ошибка сервера" in data["error"]

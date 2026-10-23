@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Response, status
 from redis.asyncio import Redis
 from sqlalchemy import text
@@ -23,24 +25,27 @@ async def readiness_check(response: Response) -> ReadinessResponse:
     redis_ok = False
     storage_ok = False
 
-    # 1. Проверка PostgreSQL
+    # 1. Проверка PostgreSQL (таймаут 3с)
     try:
         async with AsyncSessionLocal() as session:
-            await session.execute(text("SELECT 1"))
+            await asyncio.wait_for(session.execute(text("SELECT 1")), timeout=3.0)
             db_ok = True
     except Exception:
         db_ok = False
 
-    # 2. Проверка Redis
+    # 2. Проверка Redis (таймаут 3с)
     try:
         redis_client: Redis[str] = get_redis_client()
-        await redis_client.ping()
+        await asyncio.wait_for(redis_client.ping(), timeout=3.0)
         redis_ok = True
     except Exception:
         redis_ok = False
 
-    # 3. Проверка S3 хранилища
-    storage_ok = await storage_service.check_health()
+    # 3. Проверка S3 хранилища (таймаут 3с)
+    try:
+        storage_ok = await asyncio.wait_for(storage_service.check_health(), timeout=3.0)
+    except Exception:
+        storage_ok = False
 
     all_ready = db_ok and redis_ok and storage_ok
     if not all_ready:

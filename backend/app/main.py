@@ -9,9 +9,27 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.v1.router import api_v1_router
 from app.core.config import get_settings
+from app.core.database import engine
+from app.core.redis import redis_pool
 from app.services.storage_service import storage_service
 
 settings = get_settings()
+
+# Настройка структурированного логирования structlog
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer()
+        if settings.ENVIRONMENT == "prod"
+        else structlog.dev.ConsoleRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(20 if not settings.DEBUG else 10),
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(),
+    cache_logger_on_first_use=True,
+)
 logger = structlog.get_logger()
 
 
@@ -26,6 +44,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     yield
     # Очистка при завершении
     logger.info("shutdown", project=settings.PROJECT_NAME)
+    try:
+        await engine.dispose()
+        await redis_pool.disconnect()
+    except Exception as exc:
+        logger.warning("cleanup_warning", error=str(exc))
 
 
 app = FastAPI(

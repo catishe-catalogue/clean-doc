@@ -18,7 +18,12 @@ class StorageService:
             aws_access_key_id=settings.S3_ACCESS_KEY_ID,
             aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY,
             region_name=settings.S3_REGION,
-            config=Config(signature_version="s3v4"),
+            config=Config(
+                signature_version="s3v4",
+                connect_timeout=3,
+                read_timeout=5,
+                retries={"max_attempts": 2},
+            ),
         )
 
     async def ensure_bucket_exists(self) -> None:
