@@ -370,7 +370,7 @@ SSE connections : до 500 одновременных (asyncio coroutine ≈ 50 
 
 **Распределение RAM при пике:**
 
-```
+```text
 PostgreSQL      : ~512 МБ
 Redis           : ~128 МБ
 FastAPI (API)   : ~256 МБ
