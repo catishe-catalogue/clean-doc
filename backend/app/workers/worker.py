@@ -27,7 +27,7 @@ def _warmup_docling() -> None:
     """Превентивный прогрев моделей Docling перед приемом реальных клиентских задач."""
     logger.info("worker_warmup_docling_started")
     try:
-        from docling.document_converter import DocumentConverter  # pyright: ignore[reportMissingImports]
+        from docling.document_converter import DocumentConverter
 
         pdf_bytes = base64.b64decode(_WARMUP_PDF_B64)
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:

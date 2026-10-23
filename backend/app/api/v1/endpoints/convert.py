@@ -50,37 +50,50 @@ async def upload_pdf(
     """Принимает PDF, валидирует Magic Bytes, выполняет дедупликацию,
     проверяет лимит тарифа, загружает входной файл в S3 и ставит задачу в RQ.
     """
-    header = await file.read(1024)
-    converter_service.validate_pdf_header_and_mime(header, file.filename, file.content_type)
-    await file.seek(0)
-
-    content = await file.read()
-    file_size = len(content)
-    await file.seek(0)
-
     # В Slice 1 текущий пользователь берется из контекста сессии (или None для гостей)
     current_user: User | None = getattr(request.state, "user", None)
-    converter_service.validate_file_size(file_size, current_user)
-
-    sha256_checksum = hashlib.sha256(content).hexdigest()
-
-    # Дедупликация: проверка наличия активной/готовой задачи за сегодня
-    existing_job = await converter_service.check_deduplication(db, current_user, sha256_checksum)
-    if existing_job:
-        logger.info("deduplication_hit", job_id=str(existing_job.id), sha256=sha256_checksum)
-        return UploadResponse(
-            job_id=existing_job.id,
-            status="queued",
-            stream_url=f"/api/v1/convert/jobs/{existing_job.id}/stream",
-        )
-
-    # Проверка дневного лимита Free-тарифа
-    client_ip = request.client.host if request.client else "127.0.0.1"
-    await converter_service.check_and_increment_daily_limit(
-        db, current_user, fingerprint, client_ip
+    max_allowed = (
+        converter_service.MAX_FILE_SIZE_PRO
+        if (current_user and current_user.plan == "pro")
+        else converter_service.MAX_FILE_SIZE_FREE
     )
 
-    # Идентификатор сессии гостя для безопасного скачивания
+    # Валидация размера и чтение чанками для защиты от OOM DoS
+    chunks: list[bytes] = []
+    file_size = 0
+    header_checked = False
+
+    while True:
+        chunk = await file.read(1024 * 1024)  # 1 МБ чанк
+        if not chunk:
+            break
+        if not header_checked:
+            converter_service.validate_pdf_header_and_mime(
+                chunk[:1024], file.filename, file.content_type
+            )
+            header_checked = True
+
+        file_size += len(chunk)
+        if file_size > max_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": f"Размер файла превышает лимит вашего тарифа ({max_allowed // (1024 * 1024)} МБ)",
+                    "code": "FILE_TOO_LARGE",
+                    "upgrade_url": "/pricing"
+                    if not (current_user and current_user.plan == "pro")
+                    else None,
+                },
+            )
+        chunks.append(chunk)
+
+    if not header_checked:
+        converter_service.validate_pdf_header_and_mime(b"", file.filename, file.content_type)
+
+    content = b"".join(chunks)
+    sha256_checksum = hashlib.sha256(content).hexdigest()
+
+    # Идентификатор сессии гостя для безопасного скачивания и дедупликации
     session_token_hash: str | None = None
     if current_user is None:
         if anon_session:
@@ -95,6 +108,24 @@ async def upload_pdf(
                 samesite="lax",
                 secure=(settings.ENVIRONMENT == "prod"),
             )
+
+    # Дедупликация: проверка наличия активной/готовой задачи за сегодня (изолированно по сессии)
+    existing_job = await converter_service.check_deduplication(
+        db, current_user, sha256_checksum, session_token_hash
+    )
+    if existing_job:
+        logger.info("deduplication_hit", job_id=str(existing_job.id), sha256=sha256_checksum)
+        return UploadResponse(
+            job_id=existing_job.id,
+            status="queued",
+            stream_url=f"/api/v1/convert/jobs/{existing_job.id}/stream",
+        )
+
+    # Проверка дневного лимита Free-тарифа
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    await converter_service.check_and_increment_daily_limit(
+        db, current_user, fingerprint, client_ip
+    )
 
     job_id = uuid4()
     s3_input_key = f"temp/{job_id}/input.pdf"
@@ -199,6 +230,41 @@ async def stream_job_progress(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": "Задача не найдена", "code": "JOB_NOT_FOUND"},
+        )
+
+    # Устранение race condition: если конвертация завершилась до открытия SSE стрима
+    if job.status in ("completed", "failed"):
+        download_url = (
+            f"/api/v1/convert/jobs/{job.id}/download"
+            if job.status == "completed" and not job.is_preview_only
+            else None
+        )
+        terminal_event = SSEProgressEvent(
+            job_id=job.id,
+            status=cast(Literal["completed", "failed"], job.status),
+            progress_percent=100 if job.status == "completed" else 0,
+            current_step="Готово к скачиванию"
+            if job.status == "completed"
+            else "Ошибка конвертации",
+            preview_urls=job.s3_preview_keys,
+            download_url=download_url,
+            is_preview_only=job.is_preview_only,
+            error=job.error_message,
+        )
+        sse_terminal_type = "complete" if job.status == "completed" else "error"
+        data_terminal_str = terminal_event.model_dump_json()
+
+        async def immediate_generator() -> AsyncGenerator[str, None]:
+            yield f"event: {sse_terminal_type}\ndata: {data_terminal_str}\n\n"
+
+        headers = {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+        return StreamingResponse(
+            immediate_generator(), headers=headers, media_type="text/event-stream"
         )
 
     async def event_generator() -> AsyncGenerator[str, None]:

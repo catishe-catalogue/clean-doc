@@ -8,7 +8,9 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import ConversionJob
+from app.models.user import User
 from app.services.converter_service import (
+    check_and_increment_daily_limit,
     create_anon_session_token,
     extract_ip_subnet,
     select_queue,
@@ -377,3 +379,199 @@ def test_worker_warmup_docling() -> None:
     # Проверка безопасной обработки ошибки при отсутствии весов
     with patch.dict(sys.modules, {"docling.document_converter": None}):
         _warmup_docling()
+
+
+@pytest.mark.asyncio
+async def test_upload_deduplication_different_guest_not_conflicted(
+    async_client: AsyncClient,
+    sample_pdf_1page: bytes,
+    mock_storage: MagicMock,
+) -> None:
+    """Два разных анонимных гостя с одинаковым файлом НЕ должны получать один и тот же job_id."""
+    with (
+        patch("rq.Queue.enqueue", return_value=MagicMock()) as mock_enqueue,
+        patch("app.api.v1.endpoints.convert.storage_service", mock_storage),
+    ):
+        files = {"file": ("shared.pdf", BytesIO(sample_pdf_1page), "application/pdf")}
+
+        # Гость 1 загружает файл
+        resp1 = await async_client.post(
+            "/api/v1/convert/upload",
+            files=files,
+            data={"target_format": "docx", "fingerprint": "guest_1_fp"},
+        )
+        assert resp1.status_code == 202
+        job_id_1 = resp1.json()["job_id"]
+
+        # Гость 2 загружает точно такой же файл, но со своей новой сессией и fingerprint
+        files2 = {"file": ("shared.pdf", BytesIO(sample_pdf_1page), "application/pdf")}
+        resp2 = await async_client.post(
+            "/api/v1/convert/upload",
+            files=files2,
+            data={"target_format": "docx", "fingerprint": "guest_2_fp"},
+        )
+        assert resp2.status_code == 202
+        job_id_2 = resp2.json()["job_id"]
+
+        # Гости изолированы: разные job_id и 2 постановки в очередь
+        assert job_id_1 != job_id_2
+        assert mock_enqueue.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_daily_limit_guest_without_fingerprint(db_session: AsyncSession) -> None:
+    """Анонимный гость по IP: 1-я конвертация успешна, 2-я отклоняется 403 FREE_LIMIT_EXCEEDED."""
+    client_ip = "198.51.100.42"
+
+    # 1-я конвертация проходит
+    await check_and_increment_daily_limit(
+        db=db_session, user=None, fingerprint=None, client_ip=client_ip
+    )
+
+    # 2-я конвертация блокируется
+    with pytest.raises(HTTPException) as exc:
+        await check_and_increment_daily_limit(
+            db=db_session, user=None, fingerprint=None, client_ip=client_ip
+        )
+    assert exc.value.status_code == 403
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail.get("code") == "FREE_LIMIT_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_daily_limit_guest_with_fingerprint(db_session: AsyncSession) -> None:
+    """Анонимный гость с fingerprint: лимит изолирован по fingerprint."""
+    client_ip = "203.0.113.10"
+    fp1 = "browser_fp_alpha"
+    fp2 = "browser_fp_beta"
+
+    # FP 1 - первая конвертация ок, вторая блокируется
+    await check_and_increment_daily_limit(
+        db=db_session, user=None, fingerprint=fp1, client_ip=client_ip
+    )
+    with pytest.raises(HTTPException) as exc1:
+        await check_and_increment_daily_limit(
+            db=db_session, user=None, fingerprint=fp1, client_ip=client_ip
+        )
+    assert exc1.value.status_code == 403
+
+    # FP 2 на том же IP - отдельный лимит
+    await check_and_increment_daily_limit(
+        db=db_session, user=None, fingerprint=fp2, client_ip=client_ip
+    )
+
+
+@pytest.mark.asyncio
+async def test_daily_limit_registered_free_user(db_session: AsyncSession) -> None:
+    """Зарегистрированный Free-пользователь: 3 конвертации в сутки, 4-я блокируется."""
+    free_user = User(
+        email=f"free_test_{uuid4().hex[:8]}@example.com",
+        plan="free",
+    )
+    db_session.add(free_user)
+    await db_session.commit()
+    await db_session.refresh(free_user)
+
+    client_ip = "192.0.2.1"
+
+    # Первые 3 конвертации успешны
+    for _ in range(3):
+        await check_and_increment_daily_limit(
+            db=db_session, user=free_user, fingerprint=None, client_ip=client_ip
+        )
+
+    # 4-я конвертация блокируется
+    with pytest.raises(HTTPException) as exc:
+        await check_and_increment_daily_limit(
+            db=db_session, user=free_user, fingerprint=None, client_ip=client_ip
+        )
+    assert exc.value.status_code == 403
+    assert isinstance(exc.value.detail, dict)
+    assert exc.value.detail.get("code") == "FREE_LIMIT_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_daily_limit_pro_user_bypasses(db_session: AsyncSession) -> None:
+    """PRO-пользователь не имеет суточных лимитов."""
+    pro_user = User(
+        email=f"pro_test_{uuid4().hex[:8]}@example.com",
+        plan="pro",
+    )
+    db_session.add(pro_user)
+    await db_session.commit()
+
+    # Многократные вызовы не вызывают исключений
+    for _ in range(10):
+        await check_and_increment_daily_limit(
+            db=db_session, user=pro_user, fingerprint=None, client_ip="127.0.0.1"
+        )
+
+
+@pytest.mark.asyncio
+async def test_stream_completed_job_immediate_response(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """SSE стрим на уже завершенную задачу отдает событие complete мгновенно без зависания."""
+    job = ConversionJob(
+        id=uuid4(),
+        target_format="docx",
+        original_filename="ready.pdf",
+        file_size_bytes=1024,
+        status="completed",
+        s3_input_key="temp/test/in.pdf",
+        s3_output_key="temp/test/out.docx",
+        s3_preview_keys=["temp/test/p1.jpg"],
+        page_count=1,
+        is_preview_only=False,
+    )
+    db_session.add(job)
+    await db_session.commit()
+
+    resp = await async_client.get(f"/api/v1/convert/jobs/{job.id}/stream")
+    assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers["content-type"]
+    text = resp.text
+    assert "event: complete" in text
+    assert str(job.id) in text
+    assert "download_url" in text
+
+
+def test_tasks_parse_and_convert_detached_instance_safe(
+    tmp_path: object, sample_pdf_1page: bytes
+) -> None:
+    """Проверка отсутствия DetachedInstanceError при выходе из первой сессии SQLAlchemy."""
+    from pathlib import Path
+
+    from app.workers.tasks import parse_and_convert
+
+    job_id = uuid4()
+    job = ConversionJob(
+        id=job_id,
+        user_id=None,
+        target_format="docx",
+        original_filename="test.pdf",
+        file_size_bytes=len(sample_pdf_1page),
+        s3_input_key=f"temp/{job_id}/input.pdf",
+        status="pending",
+    )
+
+    mock_session = MagicMock()
+    mock_session.execute.return_value.scalar_one_or_none.return_value = job
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__enter__.return_value = mock_session
+
+    p = Path(str(tmp_path)) / "input.pdf"
+    p.write_bytes(sample_pdf_1page)
+
+    with (
+        patch("app.workers.tasks._SyncSession", return_value=mock_session_ctx),
+        patch("app.workers.tasks.storage_service.download_file_sync") as mock_download,
+        patch("app.workers.tasks._validate_pdf_with_qpdf"),
+        patch("app.workers.tasks._render_preview", return_value=(1, ["preview.jpg"])),
+        patch("app.workers.tasks._run_docling"),
+        patch("app.workers.tasks.storage_service.upload_file_sync"),
+        patch("app.workers.tasks._redis_client.publish"),
+    ):
+        parse_and_convert(str(job_id))
+        mock_download.assert_called_once()
+        assert mock_download.call_args[0][0] == f"temp/{job_id}/input.pdf"

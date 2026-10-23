@@ -15,10 +15,10 @@ from typing import Any
 from sqlalchemy import select
 import structlog
 
-from app.core.database import AsyncSessionLocal  # pyright: ignore[reportMissingImports]
-from app.models.subscription import Subscription  # pyright: ignore[reportMissingImports]
-from app.models.usage import DailyUsage  # pyright: ignore[reportMissingImports]
-from app.models.user import User  # pyright: ignore[reportMissingImports]
+from app.core.database import AsyncSessionLocal
+from app.models.subscription import Subscription
+from app.models.usage import DailyUsage
+from app.models.user import User
 
 logger = structlog.get_logger()
 

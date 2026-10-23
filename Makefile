@@ -29,6 +29,10 @@ migrate-create: ## Создать новую миграцию Alembic: make migr
 seed: ## Наполнить базу данных тестовыми данными для разработки
 	cd backend && uv run python ../scripts/seed_dev_data.py
 
+.PHONY: worker
+worker: ## Запустить фоновый воркер RQ локально
+	cd backend && uv run python -m app.workers.worker
+
 .PHONY: lint-md
 lint-md: ## Проверить markdown документацию
 	markdownlint "**/*.md" --ignore node_modules

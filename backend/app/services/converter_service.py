@@ -93,18 +93,34 @@ async def check_deduplication(
     db: AsyncSession,
     user: User | None,
     sha256_checksum: str,
+    session_token_hash: str | None = None,
 ) -> ConversionJob | None:
     """Ищет активную или завершенную задачу за сегодня с идентичным хешем."""
-    query = (
-        select(ConversionJob)
-        .where(
-            ConversionJob.user_id == (user.id if user else None),
-            ConversionJob.sha256_checksum == sha256_checksum,
-            ConversionJob.usage_date == date.today(),
-            ConversionJob.status.in_(["processing", "completed"]),
+    if user:
+        query = (
+            select(ConversionJob)
+            .where(
+                ConversionJob.user_id == user.id,
+                ConversionJob.sha256_checksum == sha256_checksum,
+                ConversionJob.usage_date == date.today(),
+                ConversionJob.status.in_(["processing", "completed"]),
+            )
+            .limit(1)
         )
-        .limit(1)
-    )
+    elif session_token_hash:
+        query = (
+            select(ConversionJob)
+            .where(
+                ConversionJob.user_id.is_(None),
+                ConversionJob.session_token_hash == session_token_hash,
+                ConversionJob.sha256_checksum == sha256_checksum,
+                ConversionJob.usage_date == date.today(),
+                ConversionJob.status.in_(["processing", "completed"]),
+            )
+            .limit(1)
+        )
+    else:
+        return None
 
     result = await db.execute(query)
     return result.scalar_one_or_none()

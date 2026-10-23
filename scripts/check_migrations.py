@@ -15,7 +15,7 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.core.config import get_settings  # pyright: ignore[reportMissingImports]
+from app.core.config import get_settings
 
 
 async def check_db_migrations() -> None:

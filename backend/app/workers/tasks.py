@@ -28,7 +28,7 @@ _sync_engine = create_engine(
     pool_size=5,
     max_overflow=10,
 )
-_SyncSession = sessionmaker(bind=_sync_engine)
+_SyncSession = sessionmaker(bind=_sync_engine, expire_on_commit=False)
 
 # Синхронный Redis для отправки сообщений в канал Pub/Sub
 _redis_client = redis.Redis(
@@ -120,7 +120,7 @@ def _render_preview(job_id: UUID, input_path: str) -> tuple[int, list[str]]:
 
 def _run_docling(target_format: str, input_path: str, output_path: str) -> None:
     """Запускает парсинг Docling и экспортирует в .docx или .xlsx."""
-    from docling.document_converter import DocumentConverter  # pyright: ignore[reportMissingImports]
+    from docling.document_converter import DocumentConverter
 
     converter = DocumentConverter()
     result = converter.convert(input_path)
@@ -151,9 +151,13 @@ def parse_and_convert(job_id_str: str) -> None:
             logger.error("job_not_found_in_worker", job_id=str(job_id))
             return
 
+        s3_input_key = job.s3_input_key
+        target_format = job.target_format
+        user_id = job.user_id
+
         user_plan = "free"
-        if job.user_id:
-            user = session.execute(select(User).where(User.id == job.user_id)).scalar_one_or_none()
+        if user_id:
+            user = session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
             if user:
                 user_plan = user.plan
 
@@ -168,7 +172,7 @@ def parse_and_convert(job_id_str: str) -> None:
     try:
         # Шаг 1: Скачивание из S3
         publish_progress(job_id, 10, "Получение документа из хранилища...")
-        storage_service.download_file_sync(job.s3_input_key, local_input)
+        storage_service.download_file_sync(s3_input_key, local_input)
 
         # Шаг 2: Проверка целостности qpdf
         publish_progress(job_id, 20, "Проверка целостности документа...")
@@ -192,15 +196,15 @@ def parse_and_convert(job_id_str: str) -> None:
                 page_total=total_pages,
             )
 
-            local_output = os.path.join(temp_dir, f"output.{job.target_format}")
-            _run_docling(job.target_format, local_input, local_output)
+            local_output = os.path.join(temp_dir, f"output.{target_format}")
+            _run_docling(target_format, local_input, local_output)
 
-            publish_progress(job_id, 85, f"Формирование файла {job.target_format.upper()}...")
-            s3_output_key = f"temp/{job_id}/output.{job.target_format}"
+            publish_progress(job_id, 85, f"Формирование файла {target_format.upper()}...")
+            s3_output_key = f"temp/{job_id}/output.{target_format}"
 
             mime_type = (
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                if job.target_format == "docx"
+                if target_format == "docx"
                 else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             storage_service.upload_file_sync(local_output, s3_output_key, content_type=mime_type)
