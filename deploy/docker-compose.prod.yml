@@ -85,6 +85,13 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME}
       S3_REGION: ru-1
+      WORKER_JOB_TIMEOUT: 180
+      WORKER_MAX_JOBS: 50
+    command: ["python", "-m", "app.workers.worker"]
+    deploy:
+      resources:
+        limits:
+          memory: 4096M
     depends_on:
       postgres:
         condition: service_healthy

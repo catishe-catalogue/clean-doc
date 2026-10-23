@@ -21,14 +21,58 @@ class StorageService:
             config=Config(
                 signature_version="s3v4",
                 connect_timeout=3,
-                read_timeout=5,
-                retries={"max_attempts": 2},
+                read_timeout=15,
+                retries={"max_attempts": 3},
             ),
         )
 
-    async def ensure_bucket_exists(self) -> None:
-        """Проверяет существование бакета и создает его при отсутствии (для dev окружения)."""
+    # --- Синхронный API (для workers/tasks.py) ---
 
+    def upload_bytes_sync(
+        self, data: bytes, s3_key: str, content_type: str = "application/octet-stream"
+    ) -> None:
+        self._s3_client.put_object(
+            Bucket=self.bucket,
+            Key=s3_key,
+            Body=data,
+            ContentType=content_type,
+            ServerSideEncryption="AES256",
+        )
+
+    def upload_file_sync(
+        self, local_path: str, s3_key: str, content_type: str = "application/octet-stream"
+    ) -> None:
+        with open(local_path, "rb") as f:
+            self._s3_client.put_object(
+                Bucket=self.bucket,
+                Key=s3_key,
+                Body=f,
+                ContentType=content_type,
+                ServerSideEncryption="AES256",
+            )
+
+    def download_file_sync(self, s3_key: str, target_local_path: str) -> None:
+        self._s3_client.download_file(self.bucket, s3_key, target_local_path)
+
+    def download_bytes_sync(self, s3_key: str) -> bytes:
+        response = self._s3_client.get_object(Bucket=self.bucket, Key=s3_key)
+        return response["Body"].read()  # type: ignore[no-any-return]
+
+    def generate_presigned_url_sync(
+        self, s3_key: str, expires_in_seconds: int = 900, filename: str | None = None
+    ) -> str:
+        params: dict[str, str] = {"Bucket": self.bucket, "Key": s3_key}
+        if filename:
+            params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
+        return self._s3_client.generate_presigned_url(  # type: ignore[no-any-return]
+            "get_object",
+            Params=params,
+            ExpiresIn=expires_in_seconds,
+        )
+
+    # --- Асинхронный API (для FastAPI controllers) ---
+
+    async def ensure_bucket_exists(self) -> None:
         def _check() -> None:
             try:
                 self._s3_client.head_bucket(Bucket=self.bucket)
@@ -38,8 +82,6 @@ class StorageService:
         await asyncio.to_thread(_check)
 
     async def check_health(self) -> bool:
-        """Проверяет доступность S3 сервиса."""
-
         def _ping() -> bool:
             try:
                 self._s3_client.head_bucket(Bucket=self.bucket)
@@ -52,32 +94,17 @@ class StorageService:
     async def upload_bytes(
         self, data: bytes, s3_key: str, content_type: str = "application/octet-stream"
     ) -> None:
-        def _upload() -> None:
-            self._s3_client.put_object(
-                Bucket=self.bucket,
-                Key=s3_key,
-                Body=data,
-                ContentType=content_type,
-            )
-
-        await asyncio.to_thread(_upload)
+        await asyncio.to_thread(self.upload_bytes_sync, data, s3_key, content_type)
 
     async def download_bytes(self, s3_key: str) -> bytes:
-        def _download() -> bytes:
-            response = self._s3_client.get_object(Bucket=self.bucket, Key=s3_key)
-            return response["Body"].read()  # type: ignore[no-any-return]
+        return await asyncio.to_thread(self.download_bytes_sync, s3_key)
 
-        return await asyncio.to_thread(_download)
-
-    async def generate_presigned_url(self, s3_key: str, expires_in_seconds: int = 900) -> str:
-        def _presign() -> str:
-            return self._s3_client.generate_presigned_url(  # type: ignore[no-any-return]
-                "get_object",
-                Params={"Bucket": self.bucket, "Key": s3_key},
-                ExpiresIn=expires_in_seconds,
-            )
-
-        return await asyncio.to_thread(_presign)
+    async def generate_presigned_url(
+        self, s3_key: str, expires_in_seconds: int = 900, filename: str | None = None
+    ) -> str:
+        return await asyncio.to_thread(
+            self.generate_presigned_url_sync, s3_key, expires_in_seconds, filename
+        )
 
 
 storage_service = StorageService()

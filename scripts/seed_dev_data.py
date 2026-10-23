@@ -11,6 +11,7 @@ BACKEND_DIR = BASE_DIR / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from typing import Any
 from sqlalchemy import select
 import structlog
 
@@ -25,9 +26,9 @@ logger = structlog.get_logger()
 async def seed() -> None:
     async with AsyncSessionLocal() as session:
         # Проверяем на повторный запуск (идемпотентность)
-        existing = await session.scalar(
-            select(User).where(User.email == "free@clean-doc.local")
-        )
+        query: Any = select(User).filter_by(email="free@clean-doc.local")
+        res = await session.execute(query)
+        existing = res.scalar_one_or_none()
         if existing:
             logger.info("seed_already_applied", free_user_id=str(existing.id))
             return

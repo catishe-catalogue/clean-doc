@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
+    from app.models.job import ConversionJob
     from app.models.token import AppToken, RefreshToken
     from app.models.usage import DailyUsage
 
@@ -46,4 +47,7 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     daily_usages: Mapped[list["DailyUsage"]] = relationship(
         "DailyUsage", back_populates="user", cascade="all, delete-orphan"
+    )
+    jobs: Mapped[list["ConversionJob"]] = relationship(
+        "ConversionJob", back_populates="user", cascade="all, delete-orphan"
     )

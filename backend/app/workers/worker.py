@@ -1,51 +1,75 @@
-import asyncio
-import signal
+import base64
+import os
 import sys
+import tempfile
 
+import redis
 import structlog
+from rq import Worker
 
 from app.core.config import get_settings
-from app.core.redis import get_redis_client
 
 logger = structlog.get_logger()
 settings = get_settings()
 
+# Минимальный валидный 1-страничный PDF-документ (Hello World)
+_WARMUP_PDF_B64 = (
+    "JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2"
+    "JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPD4KZW5k"
+    "b2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2"
+    "MTIgNzkyXQo+PgplbmRvYmoKeHJlZgowIDQKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5"
+    "IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAp0cmFpbGVy"
+    "Cjw8Ci9TaXplIDQKL1Jvb3QgMSAwIFIKPj4Kc3RhcnR4cmVmCjE5MgolJUVPRg=="
+)
 
-async def run_worker_stub() -> None:
-    """Заглушка воркера для Slice 0.
 
-    В Slice 0 проверяет связь с Redis и находится в цикле ожидания,
-    обеспечивая стабильную работу контейнера cleandoc_worker.
-    В Slice 1 этот модуль замещается точкой входа rq worker с Docling warmup.
-    """
-    logger.info("worker_stub_starting", environment=settings.ENVIRONMENT)
+def _warmup_docling() -> None:
+    """Превентивный прогрев моделей Docling перед приемом реальных клиентских задач."""
+    logger.info("worker_warmup_docling_started")
     try:
-        redis_client = get_redis_client()
-        await redis_client.ping()
-        logger.info("worker_redis_connected", host=settings.REDIS_HOST)
+        from docling.document_converter import DocumentConverter  # pyright: ignore[reportMissingImports]
+
+        pdf_bytes = base64.b64decode(_WARMUP_PDF_B64)
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(pdf_bytes)
+            f.flush()
+            temp_path = f.name
+
+        converter = DocumentConverter()
+        converter.convert(temp_path)
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        logger.info("worker_warmup_docling_completed")
     except Exception as exc:
-        logger.error("worker_redis_connection_failed", error=str(exc))
+        logger.warning("worker_warmup_docling_skipped", reason=str(exc))
 
-    stop_event = asyncio.Event()
 
-    def _signal_handler() -> None:
-        logger.info("worker_stub_stopping")
-        stop_event.set()
+def run_worker() -> None:
+    """Основной цикл RQ-воркера."""
+    logger.info(
+        "worker_starting",
+        environment=settings.ENVIRONMENT,
+        max_jobs=settings.WORKER_MAX_JOBS,
+        job_timeout=settings.WORKER_JOB_TIMEOUT,
+    )
 
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, _signal_handler)
-        except NotImplementedError:
-            pass
+    _warmup_docling()
 
-    logger.info("worker_stub_ready_idle")
-    while not stop_event.is_set():
-        await asyncio.sleep(1)
+    redis_conn = redis.Redis(
+        host=settings.REDIS_HOST,
+        port=settings.REDIS_PORT,
+        db=settings.REDIS_DB,
+        password=settings.REDIS_PASSWORD,
+    )
+
+    queues = ["priority", "fast", "heavy"]
+    worker = Worker(queues, connection=redis_conn)
+    worker.work(max_jobs=settings.WORKER_MAX_JOBS)
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(run_worker_stub())
+        run_worker()
     except (KeyboardInterrupt, SystemExit):
+        logger.info("worker_stopped")
         sys.exit(0)

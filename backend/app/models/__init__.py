@@ -1,5 +1,6 @@
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.invoice import B2BInvoice
+from app.models.job import ConversionJob
 from app.models.subscription import Subscription
 from app.models.token import AppToken, RefreshToken
 from app.models.usage import DailyUsage
@@ -15,4 +16,5 @@ __all__ = [
     "DailyUsage",
     "Subscription",
     "B2BInvoice",
+    "ConversionJob",
 ]

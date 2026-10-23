@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     # Мониторинг
     PROMETHEUS_ENABLED: bool = True
 
+    # Параметры воркера RQ и Docling
+    WORKER_MAX_JOBS: int = 50
+    WORKER_JOB_TIMEOUT: int = 180
+    DOCLING_ARTIFACTS_PATH: str = "/app/.docling"
+
 
 @lru_cache
 def get_settings() -> Settings:

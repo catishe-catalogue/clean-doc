@@ -47,6 +47,7 @@ async def test_storage_upload_and_download_bytes() -> None:
             Key=test_key,
             Body=test_data,
             ContentType="application/pdf",
+            ServerSideEncryption="AES256",
         )
 
         downloaded = await storage.download_bytes(test_key)
