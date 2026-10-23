@@ -719,10 +719,32 @@ class UUIDPrimaryKeyMixin:
 ### 6.2. Модели пользователей и токенов: `backend/app/models/user.py` и `token.py`
 
 ```python
+# backend/app/models/__init__.py
+from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.invoice import B2BInvoice
+from app.models.subscription import Subscription
+from app.models.token import AppToken, RefreshToken
+from app.models.usage import DailyUsage
+from app.models.user import User
+
+__all__ = [
+    "Base",
+    "TimestampMixin",
+    "UUIDPrimaryKeyMixin",
+    "User",
+    "RefreshToken",
+    "AppToken",
+    "DailyUsage",
+    "Subscription",
+    "B2BInvoice",
+]
+```
+
+```python
 # backend/app/models/user.py
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import BigInteger, DateTime, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
@@ -738,6 +760,15 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     telegram_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True, nullable=True)
     telegram_username: Mapped[str | None] = mapped_column(String, nullable=True)
     plan: Mapped[str] = mapped_column(String, default="free", nullable=False)
+    
+    # Magic Link / Email OTP (хеш SHA-256 кода, TTL 15 минут)
+    magic_code_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    magic_code_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    
+    # Защита от брутфорса и административная блокировка
+    is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    magic_code_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -972,6 +1003,10 @@ def upgrade() -> None:
         sa.Column("telegram_id", sa.BigInteger(), nullable=True),
         sa.Column("telegram_username", sa.Text(), nullable=True),
         sa.Column("plan", sa.Text(), server_default="free", nullable=False),
+        sa.Column("magic_code_hash", sa.Text(), nullable=True),
+        sa.Column("magic_code_expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("is_blocked", sa.Boolean(), server_default=sa.text("false"), nullable=False),
+        sa.Column("magic_code_attempts", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.CheckConstraint("plan IN ('free', 'pro')", name="check_users_plan"),
@@ -1105,6 +1140,146 @@ def downgrade() -> None:
     op.drop_table("daily_usage")
     op.drop_table("refresh_tokens")
     op.drop_table("users")
+```
+
+### 6.5. Конфигурация Alembic (`backend/alembic.ini`)
+
+```ini
+[alembic]
+script_location = alembic
+prepend_sys_path = .
+version_path_separator = os
+
+[loggers]
+keys = root,sqlalchemy,alembic
+
+[handlers]
+keys = console
+
+[formatters]
+keys = generic
+
+[logger_root]
+level = WARN
+handlers = console
+qualname =
+
+[logger_sqlalchemy]
+level = WARN
+handlers =
+qualname = sqlalchemy.engine
+
+[logger_alembic]
+level = INFO
+handlers =
+qualname = alembic
+
+[handler_console]
+class = StreamHandler
+args = (sys.stderr,)
+level = NOTSET
+formatter = generic
+
+[formatter_generic]
+format = %(levelname)-5.5s [%(name)s] %(message)s
+datefmt = %H:%M:%S
+```
+
+### 6.6. Асинхронный запуск миграций (`backend/alembic/env.py`)
+
+Модуль обеспечивает бесшовную интеграцию с `asyncpg` и автоматическое обнаружение всех моделей SQLAlchemy 2.0:
+
+```python
+import asyncio
+from logging.config import fileConfig
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import async_engine_from_config
+from alembic import context
+
+from app.core.config import get_settings
+from app.models.base import Base
+import app.models  # noqa: F401 - регистрирует все модели для autogenerate
+
+config = context.config
+settings = get_settings()
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+target_metadata = Base.metadata
+config.set_main_option("sqlalchemy.url", settings.async_database_url)
+
+
+def run_migrations_offline() -> None:
+    """Запуск миграций в offline-режиме (генерация SQL-скрипта)."""
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def do_run_migrations(connection: Connection) -> None:
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations() -> None:
+    """Асинхронный коннектор для asyncpg."""
+    connectable = async_engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+    await connectable.dispose()
+
+
+def run_migrations_online() -> None:
+    """Запуск миграций в online-режиме."""
+    asyncio.run(run_async_migrations())
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+```
+
+### 6.7. Шаблон ревизий (`backend/alembic/script.py.mako`)
+
+```mako
+"""${message}
+
+Revision ID: ${up_revision}
+Revises: ${down_revision | comma,n}
+Create Date: ${create_date}
+
+"""
+from collections.abc import Sequence
+import sqlalchemy as sa
+from alembic import op
+${imports if imports else ""}
+
+revision: str = ${repr(up_revision)}
+down_revision: str | None = ${repr(down_revision)}
+branch_labels: str | Sequence[str] | None = ${repr(branch_labels)}
+depends_on: str | Sequence[str] | None = ${repr(depends_on)}
+
+
+def upgrade() -> None:
+    ${upgrades if upgrades else "pass"}
+
+
+def downgrade() -> None:
+    ${downgrades if downgrades else "pass"}
 ```
 
 ---
@@ -1346,6 +1521,235 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     )
 ```
 
+### 8.4. Главный роутер API v1 (`backend/app/api/v1/router.py`)
+
+Модуль агрегирует контроллеры API v1 и содержит точку подключения для маршрутов конвертации Slice 1:
+
+```python
+from fastapi import APIRouter
+from app.api.v1.endpoints import health
+
+api_v1_router = APIRouter()
+
+# Служебные маршруты Slice 0
+api_v1_router.include_router(health.router, tags=["health"])
+
+# Точка расширения Slice 1:
+# from app.api.v1.endpoints import convert
+# api_v1_router.include_router(convert.router, prefix="/convert", tags=["convert"])
+```
+
+### 8.5. Процесс воркера (`backend/app/workers/worker.py`)
+
+Для Slice 0 воркер исполняет роль легковесной заглушки (daemon), проверяющей доступность Redis и переходящей в спящий режим. Это предотвращает падение контейнера `cleandoc_worker` и подготавливает его к запуску `rq worker` в Slice 1:
+
+```python
+# backend/app/workers/__init__.py
+# Пакет фоновых задач и воркеров RQ
+
+# backend/app/workers/worker.py
+import asyncio
+import signal
+import sys
+import structlog
+from app.core.config import get_settings
+from app.core.redis import get_redis_client
+
+logger = structlog.get_logger()
+settings = get_settings()
+
+
+async def run_worker_stub() -> None:
+    """Заглушка воркера для Slice 0.
+    
+    В Slice 0 проверяет связь с Redis и находится в цикле ожидания,
+    обеспечивая стабильную работу контейнера cleandoc_worker.
+    В Slice 1 этот модуль замещается точкой входа rq worker с Docling warmup.
+    """
+    logger.info("worker_stub_starting", environment=settings.ENVIRONMENT)
+    try:
+        redis_client = get_redis_client()
+        await redis_client.ping()
+        logger.info("worker_redis_connected", host=settings.REDIS_HOST)
+    except Exception as exc:
+        logger.error("worker_redis_connection_failed", error=str(exc))
+
+    stop_event = asyncio.Event()
+
+    def _signal_handler() -> None:
+        logger.info("worker_stub_stopping")
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _signal_handler)
+        except NotImplementedError:
+            pass
+
+    logger.info("worker_stub_ready_idle")
+    while not stop_event.is_set():
+        await asyncio.sleep(1)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(run_worker_stub())
+    except (KeyboardInterrupt, SystemExit):
+        sys.exit(0)
+```
+
+### 8.6. Докерфайлы бэкенда (`backend/Dockerfile.api`, `backend/Dockerfile.worker`)
+
+```dockerfile
+# backend/Dockerfile.api
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_SYSTEM_PYTHON=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.4.18 /uv /uvx /bin/
+
+COPY pyproject.toml ./
+RUN uv pip install --no-cache -r pyproject.toml
+
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+```
+
+```dockerfile
+# backend/Dockerfile.worker
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_SYSTEM_PYTHON=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    qpdf \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.4.18 /uv /uvx /bin/
+
+COPY pyproject.toml ./
+RUN uv pip install --no-cache -r pyproject.toml
+
+COPY . .
+
+CMD ["python", "-m", "app.workers.worker"]
+```
+
+### 8.7. Скрипты инициализации и проверки (`scripts/`)
+
+```python
+#!/usr/bin/env python3
+# scripts/check_migrations.py
+"""Скрипт проверки применения всех миграций Alembic перед стартом."""
+import asyncio
+import sys
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from alembic.runtime.migration import MigrationContext
+from sqlalchemy.ext.asyncio import create_async_engine
+from app.core.config import get_settings
+
+
+async def check_db_migrations() -> None:
+    settings = get_settings()
+    engine = create_async_engine(settings.async_database_url)
+
+    alembic_cfg = Config("alembic.ini")
+    script = ScriptDirectory.from_config(alembic_cfg)
+    head_revision = script.get_current_head()
+
+    async with engine.connect() as conn:
+        def _get_rev(sync_conn):
+            context = MigrationContext.configure(sync_conn)
+            return context.get_current_revision()
+
+        current_rev = await conn.run_sync(_get_rev)
+
+    await engine.dispose()
+
+    if current_rev != head_revision:
+        print(f"ERROR: DB revision ({current_rev}) does not match Alembic head ({head_revision})")
+        sys.exit(1)
+    print(f"OK: DB revision is up to date ({current_rev})")
+
+
+if __name__ == "__main__":
+    asyncio.run(check_db_migrations())
+```
+
+```python
+#!/usr/bin/env python3
+# scripts/seed_dev_data.py
+"""Скрипт наполнения dev-базы тестовыми пользователями и данными."""
+import asyncio
+from datetime import date, datetime, timezone
+import structlog
+from app.core.database import AsyncSessionLocal
+from app.models.user import User
+from app.models.subscription import Subscription
+from app.models.usage import DailyUsage
+
+logger = structlog.get_logger()
+
+
+async def seed() -> None:
+    async with AsyncSessionLocal() as session:
+        user_free = User(
+            email="free@clean-doc.local",
+            telegram_username="test_free_user",
+            plan="free",
+        )
+        user_pro = User(
+            email="pro@clean-doc.local",
+            telegram_username="test_pro_user",
+            plan="pro",
+        )
+        session.add_all([user_free, user_pro])
+        await session.flush()
+
+        subscription = Subscription(
+            user_id=user_pro.id,
+            plan="pro",
+            billing_period="month",
+            status="active",
+            amount_rub=1490,
+            current_period_start=datetime.now(timezone.utc),
+            current_period_end=datetime.now(timezone.utc),
+        )
+        usage = DailyUsage(
+            user_id=user_free.id,
+            ip_subnet="127.0.0.0/24",
+            usage_date=date.today(),
+            conversion_count=1,
+        )
+        session.add_all([subscription, usage])
+        await session.commit()
+        logger.info("seed_completed", free_user_id=str(user_free.id), pro_user_id=str(user_pro.id))
+
+
+if __name__ == "__main__":
+    asyncio.run(seed())
+```
+
 ---
 
 ## 9. Скелет фронтенда (`frontend/`)
@@ -1422,6 +1826,219 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]
 }
+```
+
+### 9.3. Конфигурация стилей (`postcss.config.js`, `tailwind.config.ts`, `globals.css`)
+
+```js
+// frontend/postcss.config.js
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+```
+
+```ts
+// frontend/tailwind.config.ts
+import type { Config } from "tailwindcss";
+
+const config: Config = {
+  content: [
+    "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        primary: "#2563EB",
+      },
+      borderRadius: {
+        xl: "0.75rem",
+      },
+    },
+  },
+  plugins: [],
+};
+export default config;
+```
+
+```css
+/* frontend/src/styles/globals.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 15, 23, 42;
+  --background-start-rgb: 255, 255, 255;
+  --background-end-rgb: 248, 250, 252;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+      to bottom,
+      transparent,
+      rgb(var(--background-end-rgb))
+    )
+    rgb(var(--background-start-rgb));
+}
+```
+
+### 9.4. Базовые страницы (`src/app/layout.tsx`, `src/app/page.tsx`)
+
+```tsx
+// frontend/src/app/layout.tsx
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import "@/styles/globals.css";
+
+const inter = Inter({ subsets: ["latin", "cyrillic"] });
+
+export const metadata: Metadata = {
+  title: "Чистый документ — онлайн-конвертер PDF в Word и Excel",
+  description: "Конвертация PDF документов с сохранением верстки и соответствием 152-ФЗ",
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="ru">
+      <body className={inter.className}>{children}</body>
+    </html>
+  );
+}
+```
+
+```tsx
+// frontend/src/app/page.tsx
+export default function HomePage() {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-slate-50 text-slate-900">
+      <div className="max-w-xl w-full text-center space-y-4">
+        <h1 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
+          Чистый документ
+        </h1>
+        <p className="text-base text-slate-600">
+          B2B микро-SaaS онлайн-конвертер PDF в Word и Excel с сохранением верстки и соответствием 152-ФЗ.
+        </p>
+        <div className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
+          Срез 0: Foundation готов к интеграции
+        </div>
+      </div>
+    </main>
+  );
+}
+```
+
+### 9.5. Базовый API-клиент (`frontend/src/lib/api-client.ts`)
+
+```ts
+// frontend/src/lib/api-client.ts
+export interface ApiErrorResponse {
+  error: string;
+  code: string;
+  upgrade_url?: string;
+}
+
+export class ApiClientError extends Error {
+  code: string;
+  status: number;
+  upgradeUrl?: string;
+
+  constructor(status: number, message: string, code: string, upgradeUrl?: string) {
+    super(message);
+    this.name = "ApiClientError";
+    this.status = status;
+    this.code = code;
+    this.upgradeUrl = upgradeUrl;
+  }
+}
+
+export async function apiClient<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const url = `${baseUrl}${endpoint}`;
+
+  const defaultHeaders: HeadersInit = {
+    "Content-Type": "application/json",
+  };
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...defaultHeaders,
+      ...options.headers,
+    },
+  });
+
+  if (!response.ok) {
+    let errorData: ApiErrorResponse;
+    try {
+      errorData = await response.json();
+    } catch {
+      errorData = {
+        error: "Неизвестная ошибка сервера",
+        code: "UNKNOWN_ERROR",
+      };
+    }
+    throw new ApiClientError(
+      response.status,
+      errorData.error || "Ошибка запроса",
+      errorData.code || "REQUEST_FAILED",
+      errorData.upgrade_url
+    );
+  }
+
+  return response.json() as Promise<T>;
+}
+```
+
+### 9.6. Конфигурация тестов Vitest (`vitest.config.ts`, `src/app/page.test.tsx`)
+
+Обеспечивает успешное выполнение шага `npm run test` в пайплайне `make gate`:
+
+```ts
+// frontend/vitest.config.ts
+import { defineConfig } from "vitest/config";
+import react from "@vitejs/plugin-react";
+import path from "path";
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: "jsdom",
+    globals: true,
+  },
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
+});
+```
+
+```tsx
+// frontend/src/app/page.test.tsx
+import { describe, it, expect } from "vitest";
+import { render, screen } from "@testing-library/react";
+import HomePage from "./page";
+
+describe("HomePage", () => {
+  it("renders main heading correctly", () => {
+    render(<HomePage />);
+    expect(screen.getByRole("heading", { level: 1 })).toBeDefined();
+    expect(screen.getByText("Чистый документ")).toBeDefined();
+  });
+});
 ```
 
 ---
@@ -1509,38 +2126,441 @@ HUGGINGFACE_HUB_VERBOSITY=error
    - Проверка генерации корректного pre-signed URL.
    - Загрузка байт в бакет MinIO и последующее скачивание с проверкой контрольной суммы.
 
-### 11.2. Базовый `tests/conftest.py`
+### 11.2. Тестовый харнес (`backend/tests/conftest.py`)
+
+Харнес предоставляет изолированное окружение для тестирования: мокирование внешних вызовов (S3, Redis) в соответствии с правилом 7.2 [`AGENTS.md`](../AGENTS.md), транзакционный откат сессий БД и конфигурирование тестового HTTP-клиента.
 
 ```python
+# backend/tests/conftest.py
+import asyncio
 from collections.abc import AsyncGenerator
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
+from app.core.config import get_settings
+from app.core.database import get_db
 from app.main import app
+from app.models.base import Base
+
+settings = get_settings()
+
+# Тестовый асинхронный движок БД
+test_engine = create_async_engine(
+    settings.async_database_url,
+    poolclass=NullPool,
+    echo=False,
+)
+
+TestingSessionLocal = async_sessionmaker(
+    bind=test_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+)
+
+
+@pytest.fixture(scope="session")
+def event_loop() -> Any:
+    """Создает единый event loop для тестовой сессии."""
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest.fixture(scope="session", autouse=True)
+async def prepare_test_db() -> AsyncGenerator[None, None]:
+    """Создает схему БД перед прогоном тестов и удаляет после."""
+    async with test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with test_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await test_engine.dispose()
 
 
 @pytest.fixture
-async def async_client() -> AsyncGenerator[AsyncClient, None]:
+async def db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Предоставляет изолированную сессию БД с автоматическим откатом транзакции."""
+    async with TestingSessionLocal() as session:
+        await session.begin()
+        try:
+            yield session
+        finally:
+            await session.rollback()
+            await session.close()
+
+
+@pytest.fixture
+def mock_redis() -> MagicMock:
+    """Мок клиента Redis для изоляции юнит-тестов."""
+    client = MagicMock()
+    client.ping = AsyncMock(return_value=True)
+    client.get = AsyncMock(return_value=None)
+    client.set = AsyncMock(return_value=True)
+    client.delete = AsyncMock(return_value=1)
+    return client
+
+
+@pytest.fixture
+def mock_storage() -> MagicMock:
+    """Мок хранилища S3 (StorageService) без реальных сетевых вызовов."""
+    storage = MagicMock()
+    storage.check_health = AsyncMock(return_value=True)
+    storage.ensure_bucket_exists = AsyncMock(return_value=None)
+    storage.upload_bytes = AsyncMock(return_value=None)
+    storage.download_bytes = AsyncMock(return_value=b"%PDF-1.4 test document content")
+    storage.generate_presigned_url = AsyncMock(
+        return_value="http://localhost:9000/cleandoc-dev/temp/test.pdf?signature=valid"
+    )
+    return storage
+
+
+@pytest.fixture
+async def async_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+    """Асинхронный тестовый клиент FastAPI с подмененной зависимостью get_db."""
+    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+
     async with AsyncClient(
-        transport=ASGITransport(app=app),  # type: ignore[arg-type]
+        transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
         yield client
+
+    app.dependency_overrides.clear()
+```
+
+### 11.3. Тесты проверки жизнеспособности (`backend/tests/test_health.py`)
+
+```python
+# backend/tests/test_health.py
+from unittest.mock import AsyncMock, patch
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_health_liveness(async_client: AsyncClient) -> None:
+    """Проверка liveness probe: эндпоинт всегда возвращает 200 OK."""
+    response = await async_client.get("/api/v1/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_readiness_all_healthy(async_client: AsyncClient) -> None:
+    """Проверка readiness probe: когда БД, Redis и S3 доступны, возвращается 200 OK."""
+    with (
+        patch("app.api.v1.endpoints.health.get_redis_client") as mock_get_redis,
+        patch("app.api.v1.endpoints.health.storage_service.check_health", new_callable=AsyncMock) as mock_s3_health,
+    ):
+        mock_redis = AsyncMock()
+        mock_redis.ping.return_value = True
+        mock_get_redis.return_value = mock_redis
+        mock_s3_health.return_value = True
+
+        response = await async_client.get("/api/v1/ready")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["checks"]["database"] is True
+        assert data["checks"]["redis"] is True
+        assert data["checks"]["storage"] is True
+
+
+@pytest.mark.asyncio
+async def test_readiness_redis_down(async_client: AsyncClient) -> None:
+    """Проверка readiness probe: сбой Redis приводит к статусу 503 Service Unavailable."""
+    with (
+        patch("app.api.v1.endpoints.health.get_redis_client") as mock_get_redis,
+        patch("app.api.v1.endpoints.health.storage_service.check_health", new_callable=AsyncMock) as mock_s3_health,
+    ):
+        mock_redis = AsyncMock()
+        mock_redis.ping.side_effect = ConnectionError("Redis unreachable")
+        mock_get_redis.return_value = mock_redis
+        mock_s3_health.return_value = True
+
+        response = await async_client.get("/api/v1/ready")
+        assert response.status_code == 503
+        data = response.json()
+        assert data["status"] == "unhealthy"
+        assert data["checks"]["redis"] is False
+        assert data["checks"]["database"] is True
+
+
+@pytest.mark.asyncio
+async def test_readiness_storage_down(async_client: AsyncClient) -> None:
+    """Проверка readiness probe: сбой S3 приводит к статусу 503 Service Unavailable."""
+    with (
+        patch("app.api.v1.endpoints.health.get_redis_client") as mock_get_redis,
+        patch("app.api.v1.endpoints.health.storage_service.check_health", new_callable=AsyncMock) as mock_s3_health,
+    ):
+        mock_redis = AsyncMock()
+        mock_redis.ping.return_value = True
+        mock_get_redis.return_value = mock_redis
+        mock_s3_health.return_value = False
+
+        response = await async_client.get("/api/v1/ready")
+        assert response.status_code == 503
+        data = response.json()
+        assert data["status"] == "unhealthy"
+        assert data["checks"]["storage"] is False
+```
+
+### 11.4. Тесты моделей БД и индексов (`backend/tests/test_database.py`)
+
+```python
+# backend/tests/test_database.py
+from datetime import date, datetime, timedelta, timezone
+from uuid import UUID
+import pytest
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.invoice import B2BInvoice
+from app.models.subscription import Subscription
+from app.models.token import AppToken, RefreshToken
+from app.models.usage import DailyUsage
+from app.models.user import User
+
+
+@pytest.mark.asyncio
+async def test_user_creation_and_defaults(db_session: AsyncSession) -> None:
+    """Проверяет создание пользователя, генерацию UUIDv4 и дефолтный тариф free."""
+    user = User(
+        email="client@clean-doc.local",
+        telegram_id=987654321,
+        telegram_username="test_client",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    assert isinstance(user.id, UUID)
+    assert user.plan == "free"
+    assert user.is_blocked is False
+    assert user.magic_code_attempts == 0
+    assert user.magic_code_hash is None
+    assert isinstance(user.created_at, datetime)
+    assert isinstance(user.updated_at, datetime)
+
+
+@pytest.mark.asyncio
+async def test_cascade_delete_user_related_records(db_session: AsyncSession) -> None:
+    """Проверяет каскадное удаление токенов и записей использования при удалении пользователя."""
+    user = User(email="cascade@clean-doc.local")
+    db_session.add(user)
+    await db_session.flush()
+
+    token = RefreshToken(
+        user_id=user.id,
+        token_hash="dummy_refresh_hash_12345",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    )
+    app_token = AppToken(
+        user_id=user.id,
+        name="1C-Integration",
+        token_hash="dummy_app_hash_67890",
+    )
+    usage = DailyUsage(
+        user_id=user.id,
+        ip_subnet="192.168.1.0/24",
+        usage_date=date.today(),
+        conversion_count=1,
+    )
+    db_session.add_all([token, app_token, usage])
+    await db_session.commit()
+
+    # Удаляем пользователя
+    await db_session.delete(user)
+    await db_session.commit()
+
+    # Проверяем каскадное удаление
+    res_token = await db_session.scalar(select(RefreshToken).where(RefreshToken.user_id == user.id))
+    res_app = await db_session.scalar(select(AppToken).where(AppToken.user_id == user.id))
+    res_usage = await db_session.scalar(select(DailyUsage).where(DailyUsage.user_id == user.id))
+
+    assert res_token is None
+    assert res_app is None
+    assert res_usage is None
+
+
+@pytest.mark.asyncio
+async def test_daily_usage_registered_user_constraint(db_session: AsyncSession) -> None:
+    """Проверяет ограничение unique(user_id, usage_date) для авторизованных пользователей."""
+    user = User(email="limit@clean-doc.local")
+    db_session.add(user)
+    await db_session.flush()
+
+    today = date.today()
+    usage1 = DailyUsage(user_id=user.id, ip_subnet="10.0.0.0/24", usage_date=today, conversion_count=1)
+    db_session.add(usage1)
+    await db_session.commit()
+
+    usage2 = DailyUsage(user_id=user.id, ip_subnet="10.0.0.0/24", usage_date=today, conversion_count=2)
+    db_session.add(usage2)
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_daily_usage_guest_partial_indexes(db_session: AsyncSession) -> None:
+    """Проверяет работу частичных уникальных индексов для анонимных пользователей."""
+    today = date.today()
+
+    # 1. Гость с fingerprint
+    u_fp1 = DailyUsage(user_id=None, fingerprint="fp_abc", ip_subnet="1.1.1.0/24", usage_date=today)
+    db_session.add(u_fp1)
+    await db_session.commit()
+
+    u_fp2_duplicate = DailyUsage(user_id=None, fingerprint="fp_abc", ip_subnet="1.1.1.0/24", usage_date=today)
+    db_session.add(u_fp2_duplicate)
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+    # 2. Гость без fingerprint (фолбэк по ip_subnet)
+    u_ip1 = DailyUsage(user_id=None, fingerprint=None, ip_subnet="2.2.2.0/24", usage_date=today)
+    db_session.add(u_ip1)
+    await db_session.commit()
+
+    u_ip2_duplicate = DailyUsage(user_id=None, fingerprint=None, ip_subnet="2.2.2.0/24", usage_date=today)
+    db_session.add(u_ip2_duplicate)
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_subscription_check_constraints(db_session: AsyncSession) -> None:
+    """Проверяет CHECK constraint на plan ('pro') и billing_period ('month', 'year')."""
+    user = User(email="sub@clean-doc.local")
+    db_session.add(user)
+    await db_session.flush()
+
+    # Валидная подписка
+    sub_valid = Subscription(
+        user_id=user.id,
+        plan="pro",
+        billing_period="month",
+        status="active",
+        amount_rub=1490,
+        current_period_start=datetime.now(timezone.utc),
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    db_session.add(sub_valid)
+    await db_session.commit()
+
+    # Невалидный план
+    sub_invalid = Subscription(
+        user_id=user.id,
+        plan="enterprise_invalid",
+        billing_period="month",
+        status="active",
+        amount_rub=5000,
+        current_period_start=datetime.now(timezone.utc),
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    db_session.add(sub_invalid)
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+```
+
+### 11.5. Тесты сервиса хранилища (`backend/tests/test_storage.py`)
+
+```python
+# backend/tests/test_storage.py
+from unittest.mock import MagicMock, patch
+import pytest
+from app.services.storage_service import StorageService
+
+
+@pytest.mark.asyncio
+async def test_storage_health_success() -> None:
+    """Проверяет положительный результат проверки доступности S3."""
+    storage = StorageService()
+    with patch.object(storage._s3_client, "head_bucket", return_value={}):
+        is_healthy = await storage.check_health()
+        assert is_healthy is True
+
+
+@pytest.mark.asyncio
+async def test_storage_health_failure() -> None:
+    """Проверяет корректную обработку недоступности бакета S3."""
+    storage = StorageService()
+    with patch.object(storage._s3_client, "head_bucket", side_effect=Exception("Connection refused")):
+        is_healthy = await storage.check_health()
+        assert is_healthy is False
+
+
+@pytest.mark.asyncio
+async def test_storage_upload_and_download_bytes() -> None:
+    """Проверяет методы загрузки и скачивания бинарных данных."""
+    storage = StorageService()
+    test_data = b"%PDF-1.4 sample file content"
+    test_key = "temp/test_job/input.pdf"
+
+    mock_body = MagicMock()
+    mock_body.read.return_value = test_data
+
+    with (
+        patch.object(storage._s3_client, "put_object", return_value={}) as mock_put,
+        patch.object(storage._s3_client, "get_object", return_value={"Body": mock_body}) as mock_get,
+    ):
+        await storage.upload_bytes(test_data, test_key, content_type="application/pdf")
+        mock_put.assert_called_once_with(
+            Bucket=storage.bucket,
+            Key=test_key,
+            Body=test_data,
+            ContentType="application/pdf",
+        )
+
+        downloaded = await storage.download_bytes(test_key)
+        assert downloaded == test_data
+        mock_get.assert_called_once_with(Bucket=storage.bucket, Key=test_key)
+
+
+@pytest.mark.asyncio
+async def test_storage_generate_presigned_url() -> None:
+    """Проверяет формирование подписанной ссылки на скачивание."""
+    storage = StorageService()
+    expected_url = "https://s3.selcloud.ru/cleandoc-prod/temp/doc.docx?X-Amz-Signature=abc"
+    test_key = "temp/test_job/result.docx"
+
+    with patch.object(storage._s3_client, "generate_presigned_url", return_value=expected_url) as mock_presign:
+        url = await storage.generate_presigned_url(test_key, expires_in_seconds=900)
+        assert url == expected_url
+        mock_presign.assert_called_once_with(
+            "get_object",
+            Params={"Bucket": storage.bucket, "Key": test_key},
+            ExpiresIn=900,
+        )
 ```
 
 ---
 
 ## 12. Порядок реализации Slice 0
 
-Реализация фундамента ведется строго по шагам:
+Реализация фундамента ведется строго последовательно:
 
 ```text
 Шаг 1: Конфигурация монорепозитория
   ├── pyproject.toml, package.json, Makefile, .gitignore, .markdownlint.yml, .env.example
-  └── Инициализация зависимостей через `uv sync` и `npm install`
+  └── Инициализация зависимостей через uv sync и npm install
 
 Шаг 2: Развертывание локальной инфраструктуры
-  ├── deploy/docker-compose.yml (PostgreSQL 18, Redis 7.2, MinIO, Mailhog)
-  └── Проверка запуска контейнеров: `make dev`
+  ├── deploy/docker-compose.yml (PostgreSQL 18, Redis 7.2, MinIO, Mailhog, api, worker)
+  └── Проверка запуска контейнеров: make dev
 
 Шаг 3: Ядро бэкенда и настройки
   ├── backend/app/core/config.py
@@ -1549,34 +2569,101 @@ async def async_client() -> AsyncGenerator[AsyncClient, None]:
   └── backend/app/core/security.py
 
 Шаг 4: Модели данных и миграция Alembic
-  ├── backend/app/models/ (base, user, token, usage, subscription, invoice)
-  ├── backend/alembic/ (env.py, versions/0001_initial_schema.py)
-  └── Применение миграции к PostgreSQL: `make migrate`
+  ├── backend/app/models/ (base, __init__, user, token, usage, subscription, invoice)
+  ├── backend/alembic/ (alembic.ini, env.py, script.py.mako, versions/0001_initial_schema.py)
+  └── Применение миграции к PostgreSQL: make migrate
 
 Шаг 5: Сервис хранилища S3
   └── backend/app/services/storage_service.py
 
-Шаг 6: Приложение FastAPI и эндпоинты
+Шаг 6: Приложение FastAPI, роутер и служебные эндпоинты
   ├── backend/app/schemas/health.py
   ├── backend/app/api/v1/endpoints/health.py
   ├── backend/app/api/v1/router.py
+  ├── backend/app/workers/worker.py (stub daemon)
   └── backend/app/main.py (lifespan, CORS, prometheus)
 
 Шаг 7: Скелет клиентской части
-  ├── frontend/tsconfig.json, tailwind.config.ts
-  └── frontend/src/app/layout.tsx, page.tsx
+  ├── frontend/tsconfig.json, postcss.config.js, tailwind.config.ts, globals.css
+  ├── frontend/src/lib/api-client.ts
+  └── frontend/src/app/layout.tsx, page.tsx, page.test.tsx
 
-Шаг 8: Написание и запуск тестов
+Шаг 8: Запуск тестового харнеса
   ├── backend/tests/ (conftest.py, test_health.py, test_database.py, test_storage.py)
-  └── Запуск: `make test-py`
+  └── Запуск: make test-py
 
 Шаг 9: Сквозная валидация качества
-  └── Запуск `make gate` и достижение чистого вывода без ошибок
+  └── Запуск make gate и достижение чистого вывода без ошибок
 ```
 
 ---
 
-## 13. Связанные документы
+## 13. Плавное перетекание в Slice 1 (Slice 1 Seams & Extension Points)
+
+Slice 0 спроектирован так, чтобы начало реализации Slice 1 (Processing) не требовало переделки фундамента. Архитектурные стыки (Seams) зафиксированы контрактами:
+
+### 13.1. Стык базы данных (Database Seam)
+
+В Slice 0 создается таблица `users` с первичным ключом `UUIDv4`.
+В Slice 1 миграция `0002_conversion_jobs.py` объявляет таблицу `conversion_jobs`:
+
+```sql
+CREATE TABLE IF NOT EXISTS conversion_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,  -- Чистый FK на users(id) из Slice 0
+    ...
+);
+CREATE INDEX idx_jobs_dedup ON conversion_jobs(user_id, sha256_checksum, usage_date)
+    WHERE sha256_checksum IS NOT NULL AND status IN ('processing', 'completed');
+```
+
+- Модель `ConversionJob` в `backend/app/models/job.py` наследует `Base, UUIDPrimaryKeyMixin, TimestampMixin` из `app.models.base`.
+- Обратная связь `user.jobs = relationship("ConversionJob", back_populates="user")` добавляется без изменения существующих полей `User`.
+
+### 13.2. Стык фонового воркера (Worker Seam)
+
+- В Slice 0 контейнер `cleandoc_worker` и `backend/Dockerfile.worker` уже настроены: они монтируют общий исходный код, подключены к сети `cleandoc_network` и зависят от `postgres`, `redis` и `minio`.
+- В Slice 1 заглушка `backend/app/workers/worker.py` заменяется на полноценную точку входа RQ:
+  - Инициализация и прогрев (warmup) тяжелых моделей `Docling` при старте процесса воркера.
+  - Запуск `rq worker priority fast heavy --max-jobs=50`.
+  - Модуль `backend/app/workers/tasks.py` реализует функции задач `parse_and_convert` и `render_preview`.
+
+### 13.3. Стык хранилища S3 (Storage Seam)
+
+- Сервис `backend/app/services/storage_service.py` из Slice 0 предоставляет все необходимые интерфейсы:
+  - `upload_bytes(data, key, content_type)` — используется в `converter_service` для загрузки входящего PDF (`temp/{job_id}/input.pdf`) и воркером для сохранения результата (`temp/{job_id}/result.docx`).
+  - `download_bytes(key)` — используется воркером для получения исходного PDF из S3 перед обработкой `qpdf` и `Docling`.
+  - `generate_presigned_url(key, expires_in_seconds=900)` — используется в эндпоинте `GET /convert/jobs/{id}/download` для генерации временной ссылки со сроком жизни 15 минут.
+- Не требуется написание нового клиента S3 в Slice 1 — сервис уже протестирован и готов к работе.
+
+### 13.4. Стык очередей и SSE стриминга (Redis & SSE Seam)
+
+- Модуль `backend/app/core/redis.py` предоставляет пул соединений `redis_pool` и фабрику `get_redis_client()`.
+- В Slice 1:
+  - Эндпоинт `POST /convert/upload` ставит задачи в очередь через `Queue(queue_name, connection=sync_redis)`.
+  - Эндпоинт `GET /convert/jobs/{id}/stream` открывает асинхронную подписку `pubsub = redis_client.pubsub(); await pubsub.subscribe(f"job:{job_id}:progress")` и пересылает события клиенту в формате SSE с отправкой комментария `: keepalive` каждые 15 секунд.
+
+### 13.5. Стык API маршрутизации (Router Seam)
+
+- Модуль `backend/app/api/v1/router.py` содержит единую точку агрегации `api_v1_router`.
+- В Slice 1 добавление всех эндпоинтов конвертации выполняется в одну строку:
+
+```python
+from app.api.v1.endpoints import convert
+api_v1_router.include_router(convert.router, prefix="/convert", tags=["convert"])
+```
+
+### 13.6. Стык клиентского приложения (Frontend Seam)
+
+- В Slice 0 развернут Next.js 14 с Tailwind CSS, Inter шрифтами и типизированным HTTP-клиентом `frontend/src/lib/api-client.ts`.
+- В Slice 1 создаются:
+  - Zustand-стор `useConverterStore.ts` для управления состоянием загрузки и прогресса.
+  - Компоненты UI: `Dropzone` с валидацией Drag & Drop, `ProgressBar` и модальное окно превью `PreviewModal`.
+  - Клиентский хук подписки на SSE стрим статуса.
+
+---
+
+## 14. Связанные документы
 
 - [Single Source of Truth (`docs/TECH.md`)](./TECH.md) — полная техническая спецификация проекта.
 - [Регламент разработки (`AGENTS.md`)](../AGENTS.md) — архитектурные правила, чеклисты и запреты.

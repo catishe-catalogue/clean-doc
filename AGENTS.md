@@ -56,8 +56,8 @@
 - **Бэкенд:** Python 3.12+, FastAPI, Uvicorn, Pydantic v2, `asyncpg`, `SQLAlchemy 2.0` (async), `redis-py` (async), `aioboto3` (S3 клиент), `rq` (Redis Queue), `structlog` (структурированное JSON логирование).
 - **Пакетный менеджер:** `uv` (управление зависимостями через `pyproject.toml` и `uv.lock`).
 - **Фронтенд:** Next.js 14 (App Router, Server Components), TypeScript 5+, Tailwind CSS, `shadcn/ui`, `zustand` (клиентское состояние), `@tanstack/react-query` (серверный стейт), `pdfjs-dist` (превью PDF), `lucide-react`.
-- **База данных и очереди:** PostgreSQL 16, Redis 7.2.
-- **Конвертация и документы:** `Docling` (IBM), `PyMuPDF` (`fitz`), CLI утилита `qpdf`, `python-docx`, `openpyxl`, `PaddleOCR`.
+- **База данных и очереди:** PostgreSQL 18, Redis 7.2.
+- **Конвертация и документы:** `Docling` 2.0+ (встроенный OCR: EasyOCR/Tesseract), `PyMuPDF` (`fitz`), CLI утилита `qpdf`, `python-docx`, `openpyxl`.
 - **Инфраструктура:** Docker, Docker Compose, Caddy v2 (автоматический TLS/SSL), MinIO (dev хранилище), Selectel S3 (prod хранилище).
 
 ---
@@ -97,9 +97,10 @@ clean-doc/
 
 ### 5.3. Правила слоя воркеров (`backend/app/workers/`)
 
-1. Исполняются в изолированных процессах `rq worker`.
-2. Обрабатывают задачи конвертации: скачивают файл из S3 $\to$ вызывают `qpdf` для нарезки 2 страниц превью $\to$ вызывают `Docling` для разбора структуры $\to$ генерируют `.docx`/`.xlsx` $\to$ загружают результат обратно в S3 $\to$ публикуют событие завершения в Redis Pub/Sub.
-3. Ловят все исключения и обновляют статус задачи в PostgreSQL (`status = 'failed'`, `error_message = '...'`).
+1. В Slice 0 воркер запускается как фоновая заглушка (`worker.py`), валидирующая доступность Redis и удерживающая процесс в режиме ожидания (idle), что обеспечивает чистый старт и healthcheck локального docker-compose стека.
+2. Начиная со Slice 1, воркеры исполняются в изолированных процессах `rq worker` (`rq worker priority fast heavy --max-jobs=50`).
+3. Обрабатывают задачи конвертации: скачивают файл из S3 $\to$ вызывают `qpdf` для нарезки 2 страниц превью $\to$ вызывают `Docling` для разбора структуры $\to$ генерируют `.docx`/`.xlsx` $\to$ загружают результат обратно в S3 $\to$ публикуют событие завершения в Redis Pub/Sub.
+4. Ловят все исключения и обновляют статус задачи в PostgreSQL (`status = 'failed'`, `error_message = '...'`).
 
 ---
 
@@ -154,20 +155,21 @@ make gate
 markdownlint "**/*.md" --ignore node_modules
 
 # 2. Статический анализ и форматирование Python
-ruff check backend/app
-ruff format --check backend/app
+cd backend && uv run ruff check app tests
+cd backend && uv run ruff format --check app tests
 
 # 3. Строгая статическая типизация Python
-mypy --strict backend/app
+cd backend && uv run mypy --strict app
 
 # 4. Запуск юнит и интеграционных тестов Python
-pytest -v backend/tests
+cd backend && uv run pytest -v tests
 
 # 5. Проверка, сборка и тесты клиентского приложения
 cd frontend && npm run lint && npm run typecheck && npm run test && npm run build && cd ..
 
 # 6. Проверка валидности конфигураций Docker Compose
 docker compose -f deploy/docker-compose.yml config --quiet
+docker compose -f deploy/docker-compose.prod.yml config --quiet
 ```
 
 Если обнаружена ошибка, агент обязан устранить первопричину, а не отключать линтер или удалять тесты.
