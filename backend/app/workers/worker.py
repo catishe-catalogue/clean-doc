@@ -25,7 +25,7 @@ _WARMUP_PDF_B64 = (
 
 def _warmup_docling() -> None:
     """Превентивный прогрев моделей Docling перед приемом реальных клиентских задач."""
-    logger.info("worker_warmup_docling_started")
+    logger.info("worker_warmup_docling_started", artifacts_path=settings.DOCLING_ARTIFACTS_PATH)
     try:
         from docling.document_converter import DocumentConverter
 

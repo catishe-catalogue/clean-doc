@@ -157,12 +157,28 @@ services:
           memory: 4096M
     volumes:
       - ../backend/app:/app/app:ro
+      - docling_models:/app/.docling
+      - docling_hf_cache:/app/.cache/huggingface
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       minio:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: cleandoc_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      api:
         condition: service_healthy
 
 volumes:
@@ -172,3 +188,7 @@ volumes:
     name: cleandoc_redis_data
   minio_data:
     name: cleandoc_minio_data
+  docling_models:
+    name: cleandoc_docling_models
+  docling_hf_cache:
+    name: cleandoc_docling_hf_cache

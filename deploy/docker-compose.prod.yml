@@ -87,16 +87,32 @@ services:
       S3_REGION: ru-1
       WORKER_JOB_TIMEOUT: 180
       WORKER_MAX_JOBS: 50
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
     command: ["python", "-m", "app.workers.worker"]
     deploy:
       resources:
         limits:
           memory: 4096M
+    volumes:
+      - docling_models_prod:/app/.docling
+      - docling_hf_cache_prod:/app/.cache/huggingface
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: cleandoc_frontend_prod
+    restart: always
+    environment:
+      NEXT_PUBLIC_API_URL: https://${DOMAIN:-clean-doc.ru}
+    depends_on:
+      - api
 
   caddy:
     image: caddy:2-alpine
@@ -121,3 +137,7 @@ volumes:
     name: cleandoc_caddy_data
   caddy_config:
     name: cleandoc_caddy_config
+  docling_models_prod:
+    name: cleandoc_docling_models_prod
+  docling_hf_cache_prod:
+    name: cleandoc_docling_hf_cache_prod

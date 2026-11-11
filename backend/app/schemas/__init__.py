@@ -1,3 +1,11 @@
+from app.schemas.auth import (
+    AuthTokenResponse,
+    MagicLinkRequest,
+    MagicLinkResponse,
+    TelegramAuthRequest,
+    UserProfileResponse,
+    VerifyCodeRequest,
+)
 from app.schemas.convert import (
     ApiErrorResponse,
     JobStatusResponse,
@@ -12,4 +20,10 @@ __all__ = [
     "JobStatusResponse",
     "SSEProgressEvent",
     "ApiErrorResponse",
+    "AuthTokenResponse",
+    "MagicLinkRequest",
+    "MagicLinkResponse",
+    "TelegramAuthRequest",
+    "UserProfileResponse",
+    "VerifyCodeRequest",
 ]

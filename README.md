@@ -28,6 +28,7 @@ make dev
 
 | Сервис | URL |
 | :--- | :--- |
+| Веб-интерфейс | <http://localhost:3000> |
 | API FastAPI | <http://localhost:8000/api/v1/docs> |
 | MinIO Console | <http://localhost:9001> |
 | Mailhog | <http://localhost:8025> |
@@ -60,6 +61,17 @@ make gate
 | `GET` | `/api/v1/convert/jobs/{id}` | Polling fallback: моментальный снимок задачи (статус, прогресс, ссылки на превью) |
 | `GET` | `/api/v1/convert/jobs/{id}/stream` | Server-Sent Events (SSE) стриминг прогресса с keepalive-комментариями каждые 15 сек |
 | `GET` | `/api/v1/convert/jobs/{id}/download` | Выдача временного S3 pre-signed URL на скачивание (`307 Temporary Redirect`, TTL 15 минут) |
+
+## API аутентификации (Slice 2: Auth & UX)
+
+| Метод | Эндпоинт | Описание |
+| :--- | :--- | :--- |
+| `POST` | `/api/v1/auth/magic-link` | Запрос 6-значного OTP кода и ссылки Magic Link на email |
+| `POST` | `/api/v1/auth/verify-code` | Проверка OTP кода, выдача JWT и установка HttpOnly cookie |
+| `POST` | `/api/v1/auth/telegram` | Аутентификация через Telegram Login Widget |
+| `POST` | `/api/v1/auth/refresh` | Ротация refresh токена из cookie и обновление access токена |
+| `POST` | `/api/v1/auth/logout` | Отзыв сессии в базе данных и очистка cookie |
+| `GET` | `/api/v1/auth/me` | Данные текущего пользователя, тариф и остаток суточных конвертаций |
 
 ## Команды Makefile
 
@@ -103,3 +115,4 @@ clean-doc/
 - [AGENTS.md](AGENTS.md) — Регламент для AI-агентов разработки
 - [SLICE-00.md](docs/SLICE-00.md) — Спецификация Foundation среза
 - [SLICE-01.md](docs/SLICE-01.md) — Спецификация Processing среза
+- [SLICE-02.md](docs/SLICE-02.md) — Спецификация Auth & UX среза

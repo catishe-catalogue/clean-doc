@@ -79,6 +79,16 @@ class Settings(BaseSettings):
     WORKER_JOB_TIMEOUT: int = 180
     DOCLING_ARTIFACTS_PATH: str = "/app/.docling"
 
+    # Telegram Login Widget
+    TELEGRAM_BOT_TOKEN: str | None = None
+
+    # JWT
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # Frontend URL для magic link
+    FRONTEND_URL: str = "http://localhost:3000"
+
 
 @lru_cache
 def get_settings() -> Settings:
