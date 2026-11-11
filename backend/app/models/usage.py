@@ -38,13 +38,13 @@ class DailyUsage(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "ip_subnet",
             "usage_date",
             unique=True,
-            postgresql_where=(fingerprint.isnot(None)),
+            postgresql_where=(user_id.is_(None) & fingerprint.isnot(None)),
         ),
         Index(
             "uq_daily_guest_ip",
             "ip_subnet",
             "usage_date",
             unique=True,
-            postgresql_where=(fingerprint.is_(None)),
+            postgresql_where=(user_id.is_(None) & fingerprint.is_(None)),
         ),
     )

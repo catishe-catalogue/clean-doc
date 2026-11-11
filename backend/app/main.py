@@ -81,10 +81,16 @@ app.include_router(api_v1_router, prefix=settings.API_V1_STR)
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.error("unhandled_server_error", path=request.url.path, error=str(exc))
+    origin = request.headers.get("origin")
+    headers: dict[str, str] = {}
+    if origin:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "error": "Внутренняя ошибка сервера. Пожалуйста, повторите попытку позже.",
             "code": "INTERNAL_SERVER_ERROR",
         },
+        headers=headers,
     )

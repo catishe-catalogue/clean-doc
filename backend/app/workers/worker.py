@@ -1,35 +1,32 @@
-import base64
 import os
 import sys
 import tempfile
 
 import redis
 import structlog
-from rq import Worker
+from rq import SimpleWorker
 
 from app.core.config import get_settings
 
 logger = structlog.get_logger()
 settings = get_settings()
 
-# Минимальный валидный 1-страничный PDF-документ (Hello World)
-_WARMUP_PDF_B64 = (
-    "JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2"
-    "JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPD4KZW5k"
-    "b2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2"
-    "MTIgNzkyXQo+PgplbmRvYmoKeHJlZgowIDQKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5"
-    "IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAp0cmFpbGVy"
-    "Cjw8Ci9TaXplIDQKL1Jvb3QgMSAwIFIKPj4Kc3RhcnR4cmVmCjE5MgolJUVPRg=="
-)
-
 
 def _warmup_docling() -> None:
     """Превентивный прогрев моделей Docling перед приемом реальных клиентских задач."""
-    logger.info("worker_warmup_docling_started", artifacts_path=settings.DOCLING_ARTIFACTS_PATH)
+    if not os.environ.get("DOCLING_ARTIFACTS_PATH"):
+        os.environ.pop("DOCLING_ARTIFACTS_PATH", None)
+    logger.info("worker_warmup_docling_started")
     try:
+        import fitz
         from docling.document_converter import DocumentConverter
 
-        pdf_bytes = base64.b64decode(_WARMUP_PDF_B64)
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((50, 72), "CleanDoc Warmup Document", fontsize=12)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             f.write(pdf_bytes)
             f.flush()
@@ -63,7 +60,7 @@ def run_worker() -> None:
     )
 
     queues = ["priority", "fast", "heavy"]
-    worker = Worker(queues, connection=redis_conn)
+    worker = SimpleWorker(queues, connection=redis_conn)
     worker.work(max_jobs=settings.WORKER_MAX_JOBS)
 
 

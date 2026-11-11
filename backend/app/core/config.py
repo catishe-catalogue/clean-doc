@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     # Параметры воркера RQ и Docling
     WORKER_MAX_JOBS: int = 50
     WORKER_JOB_TIMEOUT: int = 180
-    DOCLING_ARTIFACTS_PATH: str = "/app/.docling"
+    DOCLING_ARTIFACTS_PATH: str | None = None
 
     # Telegram Login Widget
     TELEGRAM_BOT_TOKEN: str | None = None

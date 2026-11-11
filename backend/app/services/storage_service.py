@@ -31,25 +31,49 @@ class StorageService:
     def upload_bytes_sync(
         self, data: bytes, s3_key: str, content_type: str = "application/octet-stream"
     ) -> None:
-        self._s3_client.put_object(
-            Bucket=self.bucket,
-            Key=s3_key,
-            Body=data,
-            ContentType=content_type,
-            ServerSideEncryption="AES256",
-        )
+        try:
+            self._s3_client.put_object(
+                Bucket=self.bucket,
+                Key=s3_key,
+                Body=data,
+                ContentType=content_type,
+                ServerSideEncryption="AES256",
+            )
+        except Exception as exc:
+            # Fallback для локального MinIO без настроенного KMS
+            if "KMS is not configured" in str(exc) or "NotImplemented" in str(exc):
+                self._s3_client.put_object(
+                    Bucket=self.bucket,
+                    Key=s3_key,
+                    Body=data,
+                    ContentType=content_type,
+                )
+            else:
+                raise
 
     def upload_file_sync(
         self, local_path: str, s3_key: str, content_type: str = "application/octet-stream"
     ) -> None:
         with open(local_path, "rb") as f:
-            self._s3_client.put_object(
-                Bucket=self.bucket,
-                Key=s3_key,
-                Body=f,
-                ContentType=content_type,
-                ServerSideEncryption="AES256",
-            )
+            try:
+                self._s3_client.put_object(
+                    Bucket=self.bucket,
+                    Key=s3_key,
+                    Body=f,
+                    ContentType=content_type,
+                    ServerSideEncryption="AES256",
+                )
+            except Exception as exc:
+                if "KMS is not configured" in str(exc) or "NotImplemented" in str(exc):
+                    f.seek(0)
+                    self._s3_client.put_object(
+                        Bucket=self.bucket,
+                        Key=s3_key,
+                        Body=f,
+                        ContentType=content_type,
+                    )
+                else:
+                    raise
 
     def download_file_sync(self, s3_key: str, target_local_path: str) -> None:
         self._s3_client.download_file(self.bucket, s3_key, target_local_path)

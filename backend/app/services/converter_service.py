@@ -181,7 +181,9 @@ async def check_and_increment_daily_limit(
                 )
                 .on_conflict_do_update(
                     index_elements=["fingerprint", "ip_subnet", "usage_date"],
-                    index_where=DailyUsage.fingerprint.is_not(None),
+                    index_where=(
+                        DailyUsage.user_id.is_(None) & DailyUsage.fingerprint.is_not(None)
+                    ),
                     set_={"conversion_count": DailyUsage.conversion_count + 1},
                 )
                 .returning(DailyUsage.conversion_count)
@@ -199,7 +201,7 @@ async def check_and_increment_daily_limit(
                 )
                 .on_conflict_do_update(
                     index_elements=["ip_subnet", "usage_date"],
-                    index_where=DailyUsage.fingerprint.is_(None),
+                    index_where=(DailyUsage.user_id.is_(None) & DailyUsage.fingerprint.is_(None)),
                     set_={"conversion_count": DailyUsage.conversion_count + 1},
                 )
                 .returning(DailyUsage.conversion_count)

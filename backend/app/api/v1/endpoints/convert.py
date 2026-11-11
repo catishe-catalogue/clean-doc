@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.security import get_optional_user
 from app.models.job import ConversionJob
 from app.models.user import User
 from app.schemas.convert import JobStatusResponse, SSEProgressEvent, UploadResponse
@@ -46,12 +47,11 @@ async def upload_pdf(
     db: Annotated[AsyncSession, Depends(get_db)],
     fingerprint: Annotated[str | None, Form()] = None,
     anon_session: Annotated[str | None, Cookie()] = None,
+    current_user: Annotated[User | None, Depends(get_optional_user)] = None,
 ) -> UploadResponse:
     """Принимает PDF, валидирует Magic Bytes, выполняет дедупликацию,
     проверяет лимит тарифа, загружает входной файл в S3 и ставит задачу в RQ.
     """
-    # В Slice 1 текущий пользователь берется из контекста сессии (или None для гостей)
-    current_user: User | None = getattr(request.state, "user", None)
     max_allowed = (
         converter_service.MAX_FILE_SIZE_PRO
         if (current_user and current_user.plan == "pro")
@@ -317,9 +317,9 @@ async def stream_job_progress(
 @router.get("/jobs/{job_id}/download")
 async def download_converted_file(
     job_id: UUID,
-    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     anon_session: Annotated[str | None, Cookie()] = None,
+    current_user: Annotated[User | None, Depends(get_optional_user)] = None,
 ) -> RedirectResponse:
     """Выдает 307 Redirect на временный S3 pre-signed URL готового документа.
     Проверяет права авторства задачи и блокирует скачивание при is_preview_only = True.
@@ -355,7 +355,6 @@ async def download_converted_file(
         )
 
     # Проверка авторства
-    current_user: User | None = getattr(request.state, "user", None)
     if job.user_id:
         if not current_user or current_user.id != job.user_id:
             raise HTTPException(

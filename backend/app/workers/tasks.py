@@ -120,6 +120,11 @@ def _render_preview(job_id: UUID, input_path: str) -> tuple[int, list[str]]:
 
 def _run_docling(target_format: str, input_path: str, output_path: str) -> None:
     """Запускает парсинг Docling и экспортирует в .docx или .xlsx."""
+    if not os.environ.get("DOCLING_ARTIFACTS_PATH"):
+        os.environ.pop("DOCLING_ARTIFACTS_PATH", None)
+
+    import docx
+    import pandas as pd
     from docling.document_converter import DocumentConverter
 
     converter = DocumentConverter()
@@ -129,9 +134,38 @@ def _run_docling(target_format: str, input_path: str, output_path: str) -> None:
         raise ValueError("CONVERSION_FAILED")
 
     if target_format == "docx":
-        result.document.save_as_docx(output_path)
+        doc = docx.Document()
+        for item, level in result.document.iterate_items():
+            item_type = type(item).__name__
+            if "Header" in item_type or "Title" in item_type:
+                doc.add_heading(getattr(item, "text", ""), level=min(level, 3))
+            elif "Table" in item_type and hasattr(item, "export_to_dataframe"):
+                df = item.export_to_dataframe(doc=result.document)
+                tbl = doc.add_table(rows=df.shape[0] + 1, cols=df.shape[1])
+                tbl.style = "Table Grid"
+                for j, col in enumerate(df.columns):
+                    tbl.cell(0, j).text = str(col)
+                for i, row in enumerate(df.itertuples(index=False)):
+                    for j, val in enumerate(row):
+                        tbl.cell(i + 1, j).text = str(val) if val is not None else ""
+            elif hasattr(item, "text") and item.text:
+                doc.add_paragraph(item.text)
+        doc.save(output_path)
     elif target_format == "xlsx":
-        result.document.save_as_xlsx(output_path)
+        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+            if result.document.tables:
+                for idx, table_item in enumerate(result.document.tables):
+                    df = table_item.export_to_dataframe(doc=result.document)
+                    sheet_name = f"Таблица {idx + 1}"[:31]
+                    df.to_excel(writer, sheet_name=sheet_name, index=False)
+            else:
+                lines = [
+                    it.text
+                    for it, _ in result.document.iterate_items()
+                    if hasattr(it, "text") and it.text
+                ]
+                df = pd.DataFrame({"Текст": lines})
+                df.to_excel(writer, sheet_name="Документ", index=False)
     else:
         raise ValueError("UNSUPPORTED_TARGET_FORMAT")
 
