@@ -15,9 +15,11 @@ export function useSSEStream(
     const es = new EventSource(streamUrl);
     esRef.current = es;
 
-    es.onmessage = (e) => {
+    const handleEvent = (e: Event) => {
+      const msg = e as MessageEvent;
+      if (!msg.data) return;
       try {
-        const payload = JSON.parse(e.data as string) as SSEProgressPayload;
+        const payload = JSON.parse(msg.data as string) as SSEProgressPayload;
         onMessage(payload);
         if (payload.status === 'completed' || payload.status === 'failed') {
           es.close();
@@ -27,7 +29,13 @@ export function useSSEStream(
       }
     };
 
+    es.addEventListener('message', handleEvent);
+    es.addEventListener('progress', handleEvent);
+    es.addEventListener('complete', handleEvent);
+    es.addEventListener('error', handleEvent);
+
     es.onerror = () => {
+      if (es.readyState === EventSource.CLOSED) return;
       es.close();
       onError?.();
     };
