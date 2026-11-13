@@ -46,6 +46,14 @@
   - `test-data-report.pdf` (22.9 МБ) — блокировка превышения лимита 10 МБ на Free и пропуск на PRO;
   - `test-data-contract.pdf` (24.2 MB) — обработка тяжелого B2B документа.
 - [x] Все 68 юнит- и интеграционных тестов бэкенда успешно пройдены, проверки `ruff check`, `ruff format --check`, `mypy --strict` завершаются с кодом 0.
+- [x] Реализован клиентский интерфейс тарифов и биллинга на Next.js 14 (`/pricing`) с соблюдением дизайн-принципов Hallmark (токены `:root`, мгновенный `:focus-visible`, `overflow-x: clip`, отказ от emoji и фиолетовых градиентов):
+  - карточки тарифных планов `PricingCards.tsx` (Free 0 ₽, PRO Месяц 1 490 ₽, PRO Год B2B 11 900 ₽);
+  - форма запроса и генерации B2B счета по ИНН `B2BInvoiceForm.tsx` с валидацией 10/12 цифр и скачиванием официального PDF;
+  - интеграция инициализации оплаты через ЮKassa и отмены автопродления подписки;
+  - навигация в шапке `Header.tsx` со статусом тарифа PRO / Free и модальное окно апселла `UpsellModal.tsx`;
+  - страницы публичной оферты `/offer` и политики конфиденциальности `/privacy` (152-ФЗ).
+- [x] Добавлены компонентные тесты страницы тарифов `frontend/src/app/pricing/page.test.tsx` (прохождение всех тестов Vitest).
+- [x] Полная верификация `make gate`: markdownlint, ruff, mypy, pytest, frontend lint/typecheck/test/build (код возврата 0).
 
 ---
 
@@ -81,13 +89,28 @@ clean-doc/
   frontend/
     src/
       app/
+        page.tsx                      # Главная страница конвертера
+        pricing/
+          page.tsx                    # Страница тарифов, онлайн-оплаты и B2B счетов (/pricing)
+          page.test.tsx               # Тесты страницы тарифов
+        offer/
+          page.tsx                    # Публичная оферта сервиса
+        privacy/
+          page.tsx                    # Политика 152-ФЗ
         temp/[...path]/route.ts       # Next.js Route Handler для проксирования JPEG-превью
       components/
+        billing/
+          PricingCards.tsx            # Трехколоночная тарифная сетка (Free, PRO Месяц, PRO Год B2B)
+          B2BInvoiceForm.tsx          # Форма генерации счета по ИНН через DaData и скачивание PDF
         converter/
           PreviewCards.tsx            # Отрисовка превью с корректным путем /temp/<job_id>/preview_p1.jpg
           DownloadCard.tsx            # Передача ?token=${accessToken} для нативного скачивания
+          UpsellModal.tsx             # Модалка перехода на PRO при документах > 2 стр.
         layout/
-          Header.tsx                  # Автоинициализация dev-пользователя при DEV_FAST_MODE
+          Header.tsx                  # Навигация «Тарифы», статус PRO/Free, автологин dev-пользователя
+          Footer.tsx                  # Подвал с ссылками на /offer, /privacy и 152-ФЗ
+      styles/
+        globals.css                   # Токены :root, overflow-x: clip, :focus-visible (Hallmark)
     next.config.js                    # Rewrite /temp/:path* на бэкенд
   mock_data/                          # Эталонные PDF документы для верификации
   Makefile                            # Команды make dev-fast и make dev-prod
@@ -102,13 +125,13 @@ clean-doc/
 | Тариф | Период | Стоимость | Ограничение страниц | Очередь RQ |
 | :--- | :--- | :--- | :--- | :--- |
 | **Free** | Бессрочно | 0 ₽ | 2 стр. превью (если > 2 стр.), макс 10 МБ, 3 конв./сутки | `fast` / `heavy` |
-| **PRO (Месяц)** | 1 месяц | 990 ₽ | Безлимитно, до 100 МБ, полная конвертация | `priority` |
-| **PRO (Год)** | 1 год | 7 990 ₽ (скидка 33%) | Безлимитно, до 100 МБ, B2B-счета с закрывающими актами | `priority` |
+| **PRO (Месяц)** | 1 месяц | 1 490 ₽ | Безлимитно, до 100 МБ, полная конвертация | `priority` |
+| **PRO (Год)** | 1 год | 11 900 ₽ (скидка 33%) | Безлимитно, до 100 МБ, B2B-счета с закрывающими актами | `priority` |
 
 ### 2.2. Создание платежа (`POST /api/v1/billing/create-checkout`)
 
 1. Доступен только авторизованному пользователю (`Depends(get_current_user)`).
-2. Принимает период подписки: `"month"` (990 ₽) или `"year"` (7 990 ₽).
+2. Принимает период подписки: `"month"` (1 490 ₽) или `"year"` (11 900 ₽).
 3. Формирует запрос к ЮKassa API v3:
    - `amount`: сумма в рублях;
    - `capture: True` (одностадийная оплата);
@@ -145,7 +168,7 @@ clean-doc/
 
 ### 3.2. Генерация PDF-счета с факсимиле
 
-1. Для годового тарифа B2B (7 990 ₽) генерируется уникальный номер счета формата `CD-ГГГГММДД-XXXX`.
+1. Для годового тарифа B2B (11 900 ₽) генерируется уникальный номер счета формата `CD-ГГГГММДД-XXXX`.
 2. На базе векторного движка `PyMuPDF` (`fitz`) формируется официальный бланк счета на оплату:
    - банковские реквизиты исполнителя (ООО «Чистый документ», расчетный счет, БИК, коррсчет);
    - реквизиты заказчика, полученные из DaData (наименование, ИНН, КПП, юридический адрес);
@@ -239,7 +262,7 @@ flowchart TD
 
 ## 7. Контрольный чеклист приемки и команды запуска
 
-### Запуск тестов и линтеров:
+### Запуск тестов и линтеров
 
 ```bash
 # 1. Проверка форматирования и линтинга Python
@@ -252,12 +275,15 @@ backend\.venv\Scripts\mypy.exe --config-file backend/pyproject.toml backend/app
 # 3. Полный прогон тестов бэкенда (68 тестов)
 backend\.venv\Scripts\pytest.exe backend\tests -v
 
-# 4. Проверка манифестов Docker Compose
+# 4. Проверка и тесты фронтенда
+cd frontend && npm run lint && npm run typecheck && npm run test && npm run build && cd ..
+
+# 5. Проверка манифестов Docker Compose
 docker compose -f deploy/docker-compose.yml config --quiet
 docker compose -f deploy/docker-compose.prod.yml config --quiet
 ```
 
-### Запуск приложения:
+### Запуск приложения
 
 ```bash
 # Для быстрой разработки фич:
@@ -266,4 +292,3 @@ make dev-fast
 # Для проверки боевого бизнес-цикла:
 make dev-prod
 ```
-

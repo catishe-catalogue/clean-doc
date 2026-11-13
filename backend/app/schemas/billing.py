@@ -47,4 +47,3 @@ class PlanPriceResponse(BaseModel):
     plan: str = "pro"
     price_month_rub: int = 1490
     price_year_rub: int = 11900
-

@@ -45,7 +45,7 @@ worker: ## Запустить фоновый воркер RQ локально
 
 .PHONY: lint-md
 lint-md: ## Проверить markdown документацию
-	markdownlint "**/*.md" --ignore node_modules
+	npx markdownlint-cli "**/*.md" --ignore node_modules --ignore frontend/node_modules
 
 .PHONY: lint-py
 lint-py: ## Запустить линтинг Python кода (Ruff)
