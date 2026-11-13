@@ -2,14 +2,19 @@
 import React from 'react';
 import { Download } from 'lucide-react';
 import { useConverterStore } from '@/store/useConverterStore';
+import { useAuthStore } from '@/store/useAuthStore';
 
 export const DownloadCard: React.FC = () => {
   const { downloadUrl, status, isPreviewOnly } = useConverterStore();
+  const { accessToken } = useAuthStore();
 
   if (status !== 'completed' || isPreviewOnly || !downloadUrl) return null;
 
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-  const fullDownloadUrl = downloadUrl.startsWith('http') ? downloadUrl : `${baseUrl}${downloadUrl}`;
+  let fullDownloadUrl = downloadUrl.startsWith('http') ? downloadUrl : `${baseUrl}${downloadUrl}`;
+  if (accessToken && !fullDownloadUrl.includes('token=')) {
+    fullDownloadUrl += `${fullDownloadUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(accessToken)}`;
+  }
 
   return (
     <div className="mt-6 flex justify-center">

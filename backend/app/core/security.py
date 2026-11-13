@@ -30,7 +30,7 @@ def generate_secure_token(length_bytes: int = 32) -> str:
     return secrets.token_urlsafe(length_bytes)
 
 
-def _decode_access_token(token: str) -> UUID:
+def decode_access_token(token: str) -> UUID:
     """Декодирует JWT access-токен и возвращает user_id."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
@@ -49,17 +49,37 @@ def _decode_access_token(token: str) -> UUID:
         ) from None
 
 
+_decode_access_token = decode_access_token
+
+
+async def get_or_create_dev_user(db: AsyncSession) -> User:
+    """Возвращает или создает пользователя catishe@gmail.com с планом PRO для быстрой разработки."""
+    user = await db.scalar(select(User).where(User.email == "catishe@gmail.com"))
+    if not user:
+        user = User(email="catishe@gmail.com", plan="pro", is_blocked=False)
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    elif user.plan != "pro":
+        user.plan = "pro"
+        await db.commit()
+        await db.refresh(user)
+    return user
+
+
 async def get_current_user(
     db: Annotated[AsyncSession, Depends(get_db)],
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)] = None,
 ) -> User:
     """Обязательная зависимость: возвращает авторизованного пользователя или 401."""
     if not credentials:
+        if settings.DEV_FAST_MODE:
+            return await get_or_create_dev_user(db)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Необходима авторизация", "code": "UNAUTHORIZED"},
         )
-    user_id = _decode_access_token(credentials.credentials)
+    user_id = decode_access_token(credentials.credentials)
     user = await db.scalar(select(User).where(User.id == user_id))
     if not user:
         raise HTTPException(
@@ -79,10 +99,12 @@ async def get_optional_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)] = None,
 ) -> User | None:
     """Опциональная зависимость: возвращает пользователя если токен валиден, иначе None."""
-    if not credentials:
-        return None
-    try:
-        user_id = _decode_access_token(credentials.credentials)
-        return await db.scalar(select(User).where(User.id == user_id))
-    except HTTPException:
-        return None
+    if credentials:
+        try:
+            user_id = decode_access_token(credentials.credentials)
+            return await db.scalar(select(User).where(User.id == user_id))
+        except HTTPException:
+            return None
+    if settings.DEV_FAST_MODE:
+        return await get_or_create_dev_user(db)
+    return None

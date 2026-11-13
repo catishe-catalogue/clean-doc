@@ -9,6 +9,16 @@ dev: ## Запустить локальный стек разработки в D
 	docker compose -f deploy/docker-compose.yml up -d
 	@echo "Dev стек запущен: API -> http://localhost:8000, MinIO Console -> http://localhost:9001, Mailhog -> http://localhost:8025"
 
+.PHONY: dev-fast
+dev-fast: ## Запустить стек в режиме быстрой разработки (DEV_FAST_MODE=true, без лимитов, вход catishe@gmail.com)
+	DEV_FAST_MODE=true docker compose -f deploy/docker-compose.yml up -d
+	@echo "Dev-Fast стек запущен: автоматический вход catishe@gmail.com PRO, безлимитная загрузка"
+
+.PHONY: dev-prod
+dev-prod: ## Запустить стек в реалистичном Production-режиме (тарифы, 2-стр. превью, OTP на почту)
+	DEV_FAST_MODE=false docker compose -f deploy/docker-compose.yml up -d
+	@echo "Prod-Simulation стек запущен: гостевой лимит 2 стр., проверка OTP через Mailhog"
+
 .PHONY: down
 down: ## Остановить все локальные контейнеры
 	docker compose -f deploy/docker-compose.yml down

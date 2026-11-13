@@ -58,10 +58,20 @@ class Settings(BaseSettings):
 
     # S3 Хранилище (MinIO dev / Selectel prod)
     S3_ENDPOINT_URL: str = "http://localhost:9000"
+    S3_PUBLIC_URL: str | None = None
     S3_REGION: str = "ru-1"
     S3_BUCKET_NAME: str = "cleandoc-dev"
     S3_ACCESS_KEY_ID: str = "minioadmin"
     S3_SECRET_ACCESS_KEY: str = "minioadmin"
+
+    # Биллинг: ЮKassa и DaData
+    YUKASSA_SHOP_ID: str | None = None
+    YUKASSA_SECRET_KEY: str | None = None
+    YUKASSA_RETURN_URL: str = "http://localhost:3000/dashboard"
+    DADATA_API_KEY: str | None = None
+
+    # Режим быстрой разработки (bypass auth & limits, auto-login catishe@gmail.com PRO)
+    DEV_FAST_MODE: bool = False
 
     # SMTP для Magic Link
     SMTP_HOST: str = "localhost"

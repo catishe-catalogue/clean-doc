@@ -110,6 +110,8 @@ services:
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
       SMTP_USE_TLS: "false"
+      DEV_FAST_MODE: ${DEV_FAST_MODE:-false}
+      S3_PUBLIC_URL: http://localhost:9000
     volumes:
       - ../backend/app:/app/app:ro
       - ../backend/alembic:/app/alembic:ro
@@ -153,6 +155,8 @@ services:
       S3_REGION: ru-1
       WORKER_JOB_TIMEOUT: 180
       WORKER_MAX_JOBS: 50
+      DEV_FAST_MODE: ${DEV_FAST_MODE:-false}
+      S3_PUBLIC_URL: http://localhost:9000
     command: ["python", "-m", "app.workers.worker"]
     deploy:
       resources:
@@ -180,6 +184,7 @@ services:
       - "3000:3000"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      INTERNAL_API_URL: http://api:8000
     depends_on:
       api:
         condition: service_healthy

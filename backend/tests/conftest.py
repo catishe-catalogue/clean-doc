@@ -1,4 +1,4 @@
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock
 
 import fitz
@@ -13,6 +13,19 @@ from app.main import app
 from app.models.base import Base
 
 settings = get_settings()
+
+
+@pytest.fixture(autouse=True)
+def ensure_default_prod_simulation_in_tests() -> Generator[None, None, None]:
+    """Гарантирует изоляцию тестов: по умолчанию проверки идут в строгом режиме,
+
+    независимо от локального значения DEV_FAST_MODE в .env файле разработчика.
+    """
+    orig_mode = settings.DEV_FAST_MODE
+    settings.DEV_FAST_MODE = False
+    yield
+    settings.DEV_FAST_MODE = orig_mode
+
 
 # Тестовый асинхронный движок БД
 test_engine = create_async_engine(

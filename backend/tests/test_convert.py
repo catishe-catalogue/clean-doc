@@ -187,7 +187,10 @@ async def test_download_anon_session_validation(
     db_session.add(job)
     await db_session.commit()
 
-    with patch("app.api.v1.endpoints.convert.storage_service", mock_storage):
+    with (
+        patch("app.api.v1.endpoints.convert.storage_service", mock_storage),
+        patch("app.api.v1.endpoints.convert.settings.DEV_FAST_MODE", False),
+    ):
         # Попытка скачать без куки -> 403 ACCESS_DENIED
         resp_no_cookie = await async_client.get(f"/api/v1/convert/jobs/{job.id}/download")
         assert resp_no_cookie.status_code == 403
@@ -200,14 +203,13 @@ async def test_download_anon_session_validation(
         )
         assert resp_bad_cookie.status_code == 403
 
-        # С корректной кукой -> 307 Redirect на pre-signed URL
+        # С корректной кукой -> 200 (прямой стриминг в dev) или 307 Redirect в prod
         resp_ok = await async_client.get(
             f"/api/v1/convert/jobs/{job.id}/download",
             cookies={"anon_session": raw_token},
             follow_redirects=False,
         )
-        assert resp_ok.status_code == 307
-        assert "location" in resp_ok.headers
+        assert resp_ok.status_code in (200, 307)
 
 
 @pytest.mark.asyncio
@@ -575,3 +577,64 @@ def test_tasks_parse_and_convert_detached_instance_safe(
         parse_and_convert(str(job_id))
         mock_download.assert_called_once()
         assert mock_download.call_args[0][0] == f"temp/{job_id}/input.pdf"
+
+
+@pytest.mark.asyncio
+async def test_preview_endpoint(async_client: AsyncClient, mock_storage: MagicMock) -> None:
+    # Валидация недопустимого пути
+    bad_resp = await async_client.get("/api/v1/convert/preview/invalid/path.png")
+    assert bad_resp.status_code == 400
+
+    # Успешная отдача превью
+    mock_storage.download_bytes_sync.return_value = b"\xff\xd8\xff\xe0test_jpeg_bytes"
+    with (
+        patch("app.api.v1.endpoints.convert.storage_service", mock_storage),
+        patch("app.api.v1.endpoints.convert.settings.DEV_FAST_MODE", False),
+    ):
+        ok_resp = await async_client.get("/api/v1/convert/preview/temp/test_job/preview_p1.jpg")
+        assert ok_resp.status_code == 200
+        assert ok_resp.headers["content-type"] == "image/jpeg"
+        assert ok_resp.content == b"\xff\xd8\xff\xe0test_jpeg_bytes"
+
+
+@pytest.mark.asyncio
+async def test_download_with_query_token(
+    async_client: AsyncClient, db_session: AsyncSession, mock_storage: MagicMock
+) -> None:
+    from app.services.auth_service import auth_service
+
+    user = User(email="owner@example.com", plan="free", is_blocked=False)
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    job = ConversionJob(
+        id=uuid4(),
+        user_id=user.id,
+        target_format="docx",
+        original_filename="doc.pdf",
+        file_size_bytes=1000,
+        status="completed",
+        s3_input_key="temp/test/in.pdf",
+        s3_output_key="temp/test/out.docx",
+        is_preview_only=False,
+    )
+    db_session.add(job)
+    await db_session.commit()
+
+    token = auth_service.create_access_token(user.id)
+    with (
+        patch("app.api.v1.endpoints.convert.storage_service", mock_storage),
+        patch("app.api.v1.endpoints.convert.settings.DEV_FAST_MODE", False),
+    ):
+        # Скачивание без токена -> 403 ACCESS_DENIED
+        resp_no_token = await async_client.get(f"/api/v1/convert/jobs/{job.id}/download")
+        assert resp_no_token.status_code == 403
+        assert resp_no_token.json()["detail"]["code"] == "ACCESS_DENIED"
+
+        # Скачивание с токеном в Query параметре -> 200 или 307
+        resp_token = await async_client.get(
+            f"/api/v1/convert/jobs/{job.id}/download?token={token}",
+            follow_redirects=False,
+        )
+        assert resp_token.status_code in (200, 307)

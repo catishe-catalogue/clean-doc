@@ -1,13 +1,38 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { FileCheck, User, LogOut } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { AuthModal } from '@/components/auth/AuthModal';
 import { apiClient } from '@/lib/api-client';
+import { UserProfile } from '@/lib/types';
 
 export const Header: React.FC = () => {
-  const { user, accessToken, clearAuth } = useAuthStore();
+  const { user, accessToken, clearAuth, setAuth } = useAuthStore();
   const [authOpen, setAuthOpen] = useState(false);
+
+  useEffect(() => {
+    if (accessToken && user) return;
+    const initAuth = async () => {
+      try {
+        const devSession = await apiClient<{ access_token: string }>(
+          '/api/v1/auth/dev-session',
+          { method: 'GET' }
+        ).catch(() => null);
+
+        const token = devSession?.access_token || accessToken;
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const profile = await apiClient<UserProfile>('/api/v1/auth/me', { headers });
+        if (profile) {
+          setAuth(token || '', profile);
+        }
+      } catch {
+        // Гостевой режим в продакшене
+      }
+    };
+    initAuth();
+  }, [accessToken, user, setAuth]);
 
   const handleLogout = async () => {
     try {

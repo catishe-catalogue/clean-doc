@@ -1,5 +1,5 @@
 import secrets
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_or_create_dev_user
 from app.models.job import ConversionJob
 from app.models.token import RefreshToken
 from app.models.usage import DailyUsage
@@ -192,7 +192,9 @@ async def get_current_user_profile(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserProfileResponse:
     """Получение профиля авторизованного пользователя и остатка дневных конвертаций."""
-    today = date.today()
+    from app.services.converter_service import get_utc_today
+
+    today = get_utc_today()
     usage = await db.scalar(
         select(DailyUsage.conversion_count)
         .where(DailyUsage.user_id == current_user.id)
@@ -211,3 +213,18 @@ async def get_current_user_profile(
         is_blocked=current_user.is_blocked,
         created_at=current_user.created_at,
     )
+
+
+@router.get("/dev-session", response_model=AuthTokenResponse)
+async def get_dev_session(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AuthTokenResponse:
+    """Быстрая выдача токена для catishe@gmail.com в режиме быстрой разработки."""
+    if not settings.DEV_FAST_MODE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "Dev-режим отключен", "code": "DEV_MODE_DISABLED"},
+        )
+    dev_user = await get_or_create_dev_user(db)
+    access_token = auth_service.create_access_token(dev_user.id)
+    return AuthTokenResponse(access_token=access_token)

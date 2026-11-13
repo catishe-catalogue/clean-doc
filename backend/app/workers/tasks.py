@@ -216,8 +216,8 @@ def parse_and_convert(job_id_str: str) -> None:
         publish_progress(job_id, 30, "Создание превью (страницы 1–2)...")
         total_pages, preview_keys = _render_preview(job_id, local_input)
 
-        # Определение признака is_preview_only (Free + документ > 2 стр.)
-        is_preview_only = user_plan == "free" and total_pages > 2
+        # Определение признака is_preview_only (Free + документ > 2 стр., в DEV_FAST_MODE снимается)
+        is_preview_only = (user_plan == "free" and total_pages > 2) and not settings.DEV_FAST_MODE
 
         s3_output_key: str | None = None
 

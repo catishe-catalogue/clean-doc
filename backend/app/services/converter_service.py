@@ -1,16 +1,19 @@
 import hashlib
 import ipaddress
 import secrets
-from datetime import date
+from datetime import UTC, date, datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.job import ConversionJob
 from app.models.usage import DailyUsage
 from app.models.user import User
+
+settings = get_settings()
 
 PDF_MAGIC_BYTES = b"%PDF-"
 MAX_FILE_SIZE_FREE = 10 * 1024 * 1024  # 10 МБ
@@ -49,7 +52,7 @@ def validate_pdf_header_and_mime(
 
 def validate_file_size(size_bytes: int, user: User | None) -> None:
     """Проверяет ограничение размера файла по тарифу."""
-    is_pro = user is not None and user.plan == "pro"
+    is_pro = (user is not None and user.plan == "pro") or settings.DEV_FAST_MODE
     max_size = MAX_FILE_SIZE_PRO if is_pro else MAX_FILE_SIZE_FREE
 
     if size_bytes > max_size:
@@ -82,11 +85,16 @@ def select_queue(user: User | None, file_size_bytes: int) -> str:
     fast     — Free, файл < 5 МБ (текстовый документ)
     heavy    — Free, файл >= 5 МБ (тяжелый скан или многостраничный отчет)
     """
-    if user and user.plan == "pro":
+    if (user and user.plan == "pro") or settings.DEV_FAST_MODE:
         return "priority"
     if file_size_bytes < 5 * 1024 * 1024:
         return "fast"
     return "heavy"
+
+
+def get_utc_today() -> date:
+    """Возвращает текущую дату в часовом поясе UTC."""
+    return datetime.now(UTC).date()
 
 
 async def check_deduplication(
@@ -96,13 +104,14 @@ async def check_deduplication(
     session_token_hash: str | None = None,
 ) -> ConversionJob | None:
     """Ищет активную или завершенную задачу за сегодня с идентичным хешем."""
+    today = get_utc_today()
     if user:
         query = (
             select(ConversionJob)
             .where(
                 ConversionJob.user_id == user.id,
                 ConversionJob.sha256_checksum == sha256_checksum,
-                ConversionJob.usage_date == date.today(),
+                ConversionJob.usage_date == today,
                 ConversionJob.status.in_(["processing", "completed"]),
             )
             .limit(1)
@@ -114,7 +123,7 @@ async def check_deduplication(
                 ConversionJob.user_id.is_(None),
                 ConversionJob.session_token_hash == session_token_hash,
                 ConversionJob.sha256_checksum == sha256_checksum,
-                ConversionJob.usage_date == date.today(),
+                ConversionJob.usage_date == today,
                 ConversionJob.status.in_(["processing", "completed"]),
             )
             .limit(1)
@@ -133,10 +142,10 @@ async def check_and_increment_daily_limit(
     client_ip: str,
 ) -> None:
     """Проверяет суточный лимит Free-тарифа (3 для логина, 1 для анонима) и фиксирует расход."""
-    if user and user.plan == "pro":
-        return  # Безлимитный PRO-тариф
+    if (user and user.plan == "pro") or settings.DEV_FAST_MODE:
+        return  # Безлимитный PRO-тариф или режим быстрой разработки
 
-    today = date.today()
+    today = get_utc_today()
     ip_subnet = extract_ip_subnet(client_ip)
 
     if user:

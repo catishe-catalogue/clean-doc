@@ -39,6 +39,11 @@ class AuthService:
         token = jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
         return token, int(expires_delta.total_seconds())
 
+    def create_access_token(self, user_id: UUID) -> str:
+        """Удобный алиас для получения access-токена."""
+        token, _ = self.generate_jwt_access_token(user_id)
+        return token
+
     async def create_magic_code(self, db: AsyncSession, email: str) -> None:
         """Генерирует 6-значный OTP, сохраняет его хеш и отправляет письмо."""
         email_clean = email.lower().strip()

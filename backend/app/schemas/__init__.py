@@ -6,6 +6,15 @@ from app.schemas.auth import (
     UserProfileResponse,
     VerifyCodeRequest,
 )
+from app.schemas.billing import (
+    CheckoutResponse,
+    CreateCheckoutRequest,
+    CreateInvoiceRequest,
+    InvoiceResponse,
+    PlanPriceResponse,
+    SubscriptionStatusResponse,
+    YukassaWebhookPayload,
+)
 from app.schemas.convert import (
     ApiErrorResponse,
     JobStatusResponse,
@@ -26,4 +35,11 @@ __all__ = [
     "TelegramAuthRequest",
     "UserProfileResponse",
     "VerifyCodeRequest",
+    "CreateCheckoutRequest",
+    "CheckoutResponse",
+    "CreateInvoiceRequest",
+    "InvoiceResponse",
+    "YukassaWebhookPayload",
+    "SubscriptionStatusResponse",
+    "PlanPriceResponse",
 ]

@@ -88,11 +88,17 @@ class StorageService:
         params: dict[str, str] = {"Bucket": self.bucket, "Key": s3_key}
         if filename:
             params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
-        return self._s3_client.generate_presigned_url(  # type: ignore[no-any-return]
+        url: str = self._s3_client.generate_presigned_url(
             "get_object",
             Params=params,
             ExpiresIn=expires_in_seconds,
         )
+        # shortcut: замена внутреннего имени docker minio на localhost, до настройки caddy reverse proxy
+        if settings.S3_PUBLIC_URL and settings.S3_ENDPOINT_URL in url:
+            url = url.replace(settings.S3_ENDPOINT_URL, settings.S3_PUBLIC_URL)
+        elif "http://minio:9000" in url:
+            url = url.replace("http://minio:9000", "http://localhost:9000")
+        return url
 
     # --- Асинхронный API (для FastAPI controllers) ---
 

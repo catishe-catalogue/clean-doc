@@ -1,7 +1,10 @@
 import asyncio
 import hashlib
+import io
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from typing import Annotated, Literal, cast
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import redis as sync_redis
@@ -14,6 +17,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     Response,
     UploadFile,
@@ -21,12 +25,19 @@ from fastapi import (
 )
 from fastapi.responses import RedirectResponse, StreamingResponse
 from rq import Queue
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.security import get_optional_user
+from app.core.security import (
+    decode_access_token,
+    get_optional_user,
+    get_or_create_dev_user,
+    hash_token,
+)
 from app.models.job import ConversionJob
+from app.models.token import RefreshToken
 from app.models.user import User
 from app.schemas.convert import JobStatusResponse, SSEProgressEvent, UploadResponse
 from app.services import converter_service
@@ -140,6 +151,7 @@ async def upload_pdf(
         original_filename=file.filename or "document.pdf",
         file_size_bytes=file_size,
         sha256_checksum=sha256_checksum,
+        usage_date=converter_service.get_utc_today(),
         status="queued",
         s3_input_key=s3_input_key,
     )
@@ -314,13 +326,38 @@ async def stream_job_progress(
     return StreamingResponse(event_generator(), headers=headers, media_type="text/event-stream")
 
 
+@router.get("/preview/{preview_path:path}")
+async def get_preview_image(preview_path: str) -> Response:
+    """Отдает JPEG-превью страницы из S3 хранилища."""
+    clean_key = preview_path.lstrip("/")
+    if not clean_key.startswith("temp/") or not clean_key.endswith(".jpg"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "Недопустимый путь к превью", "code": "INVALID_PATH"},
+        )
+    try:
+        content = await asyncio.to_thread(storage_service.download_bytes_sync, clean_key)
+        return Response(
+            content=content,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Превью не найдено", "code": "PREVIEW_NOT_FOUND"},
+        ) from None
+
+
 @router.get("/jobs/{job_id}/download")
 async def download_converted_file(
     job_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
+    token: Annotated[str | None, Query()] = None,
     anon_session: Annotated[str | None, Cookie()] = None,
+    refresh_token: Annotated[str | None, Cookie()] = None,
     current_user: Annotated[User | None, Depends(get_optional_user)] = None,
-) -> RedirectResponse:
+) -> Response:
     """Выдает 307 Redirect на временный S3 pre-signed URL готового документа.
     Проверяет права авторства задачи и блокирует скачивание при is_preview_only = True.
     """
@@ -337,8 +374,8 @@ async def download_converted_file(
             detail={"error": "Обработка файла еще не завершена", "code": "CONVERSION_NOT_READY"},
         )
 
-    # Проверка ограничения Free-тарифа (многостраничный документ)
-    if job.is_preview_only:
+    # Режим быстрой разработки: снятие блокировок предпросмотра
+    if not settings.DEV_FAST_MODE and job.is_preview_only:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
@@ -354,28 +391,75 @@ async def download_converted_file(
             detail={"error": "Обработка файла еще не завершена", "code": "CONVERSION_NOT_READY"},
         )
 
-    # Проверка авторства
-    if job.user_id:
-        if not current_user or current_user.id != job.user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": "Доступ к файлу запрещен", "code": "ACCESS_DENIED"},
-            )
-    else:
-        # Проверка гостевой сессии
-        if not anon_session or not job.session_token_hash:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": "Сессия гостя не найдена", "code": "ACCESS_DENIED"},
-            )
-        if not converter_service.verify_anon_session_token(anon_session, job.session_token_hash):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": "Доступ к чужой задаче запрещен", "code": "ACCESS_DENIED"},
-            )
+    # Разрешение пользователя, если Bearer заголовок не был передан при переходе по ссылке
+    if not current_user and token:
+        try:
+            token_user_id = decode_access_token(token)
+            current_user = await db.scalar(select(User).where(User.id == token_user_id))
+        except HTTPException:
+            current_user = None
+
+    if not current_user and refresh_token:
+        rt_hash = hash_token(refresh_token)
+        now_utc = datetime.now(UTC)
+        rt_record = await db.scalar(
+            select(RefreshToken)
+            .where(RefreshToken.token_hash == rt_hash)
+            .where(RefreshToken.revoked.is_(False))
+            .where(RefreshToken.expires_at > now_utc)
+        )
+        if rt_record:
+            current_user = await db.scalar(select(User).where(User.id == rt_record.user_id))
+
+    if not current_user and settings.DEV_FAST_MODE:
+        current_user = await get_or_create_dev_user(db)
+
+    # Проверка авторства (в dev-режиме доступ не блокируется)
+    if not settings.DEV_FAST_MODE:
+        if job.user_id:
+            if not current_user or current_user.id != job.user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={"error": "Доступ к файлу запрещен", "code": "ACCESS_DENIED"},
+                )
+        else:
+            if not anon_session or not job.session_token_hash:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={"error": "Сессия гостя не найдена", "code": "ACCESS_DENIED"},
+                )
+            if not converter_service.verify_anon_session_token(
+                anon_session, job.session_token_hash
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={"error": "Доступ к чужой задаче запрещен", "code": "ACCESS_DENIED"},
+                )
 
     base_name = job.original_filename.rsplit(".", 1)[0]
     out_filename = f"{base_name}.{job.target_format}"
+
+    # shortcut: в dev-окружении стримим файл напрямую, минуя SignatureDoesNotMatch из-за различий minio/localhost в docker
+    if (
+        settings.ENVIRONMENT == "dev"
+        or "minio" in storage_service.endpoint_url
+        or "localhost" in storage_service.endpoint_url
+    ):
+        file_bytes = await storage_service.download_bytes(job.s3_output_key)
+        media_type = (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            if job.target_format == "docx"
+            else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        return StreamingResponse(
+            io.BytesIO(file_bytes),
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(out_filename)}",
+                "Access-Control-Expose-Headers": "Content-Disposition",
+            },
+        )
+
     presigned_url = await storage_service.generate_presigned_url(
         job.s3_output_key,
         expires_in_seconds=900,  # 15 минут
