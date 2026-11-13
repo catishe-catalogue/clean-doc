@@ -63,7 +63,9 @@ export const EmailOtpForm: React.FC<Props> = ({ onSuccess }) => {
   if (step === 'code') {
     return (
       <form onSubmit={handleVerifyCode} className="space-y-4">
-        <p className="text-sm text-slate-600">Код отправлен на <strong>{email}</strong></p>
+        <p className="text-xs sm:text-sm text-muted">
+          Код отправлен на <strong className="text-ink font-mono">{email}</strong>
+        </p>
         <input
           type="text"
           inputMode="numeric"
@@ -72,18 +74,22 @@ export const EmailOtpForm: React.FC<Props> = ({ onSuccess }) => {
           placeholder="000000"
           value={code}
           onChange={(e) => setCode(e.target.value)}
-          className="w-full border border-slate-200 rounded-xl px-4 py-3 text-center text-2xl tracking-widest font-mono focus:outline-none focus:border-blue-500"
+          className="w-full border border-rule-2 rounded-stock px-4 py-2.5 text-center text-xl tracking-widest font-mono bg-paper text-ink focus-visible:outline-2 focus-visible:outline-focus"
           autoFocus
         />
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-xs text-error">{error}</p>}
         <button
           type="submit"
           disabled={loading || code.length !== 6}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-3 rounded-xl font-medium transition-colors"
+          className="btn-board w-full py-2.5 text-xs sm:text-sm font-medium focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50 disabled:pointer-events-none"
         >
-          {loading ? 'Проверка...' : 'Войти'}
+          {loading ? 'Проверка…' : 'Войти'}
         </button>
-        <button type="button" onClick={() => setStep('email')} className="w-full text-sm text-slate-500 hover:text-slate-700">
+        <button
+          type="button"
+          onClick={() => setStep('email')}
+          className="w-full text-xs text-muted hover:text-ink transition-colors focus-visible:outline-2 focus-visible:outline-focus"
+        >
           Изменить email
         </button>
       </form>
@@ -97,17 +103,16 @@ export const EmailOtpForm: React.FC<Props> = ({ onSuccess }) => {
         placeholder="your@email.ru"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
-        className="w-full border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500"
-        autoFocus
+        className="w-full border border-rule-2 rounded-stock px-4 py-2.5 text-xs sm:text-sm bg-paper text-ink placeholder:text-muted focus-visible:outline-2 focus-visible:outline-focus"
         required
       />
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-xs text-error">{error}</p>}
       <button
         type="submit"
         disabled={loading || !email}
-        className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-3 rounded-xl font-medium transition-colors"
+        className="btn-board w-full py-2.5 text-xs sm:text-sm font-medium focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50 disabled:pointer-events-none"
       >
-        {loading ? 'Отправка...' : 'Получить код'}
+        {loading ? 'Отправка кода…' : 'Получить 6-значный код'}
       </button>
     </form>
   );

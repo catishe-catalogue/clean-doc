@@ -13,21 +13,25 @@ export const FormatSelector: React.FC = () => {
   ];
 
   return (
-    <div className="flex gap-3">
-      {formats.map(({ value, label, icon }) => (
-        <button
-          key={value}
-          onClick={() => setTargetFormat(value)}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-medium transition-all ${
-            targetFormat === value
-              ? 'border-blue-500 bg-blue-50 text-blue-700'
-              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-          }`}
-        >
-          {icon}
-          {label}
-        </button>
-      ))}
+    <div className="inline-flex p-1.5 rounded-stock bg-paper-2 border border-rule-2 gap-2 shadow-inner">
+      {formats.map(({ value, label, icon }) => {
+        const isSelected = targetFormat === value;
+        return (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setTargetFormat(value)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-stock text-sm font-medium transition-colors transition-transform focus-visible:outline-2 focus-visible:outline-focus ${
+              isSelected
+                ? 'bg-cotton text-ink border border-rule-2 shadow-card'
+                : 'text-muted hover:text-ink'
+            }`}
+          >
+            {icon}
+            <span>{label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 };

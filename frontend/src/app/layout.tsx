@@ -1,19 +1,16 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
 import '@/styles/globals.css';
 import Providers from './providers';
 
-const inter = Inter({ subsets: ['latin', 'cyrillic'] });
-
 export const metadata: Metadata = {
   title: 'Чистый документ — онлайн-конвертер PDF в Word и Excel',
-  description: 'Конвертация PDF документов с сохранением верстки и соответствием 152-ФЗ',
+  description: 'Конвертация PDF документов с сохранением верстки таблиц и соответствием 152-ФЗ',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ru">
-      <body className={inter.className}>
+    <html lang="ru" className="overflow-x-clip">
+      <body className="overflow-x-clip min-h-screen bg-paper text-ink selection:bg-accent/20">
         <Providers>{children}</Providers>
       </body>
     </html>

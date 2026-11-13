@@ -1,77 +1,116 @@
-/* Hallmark stamp: modern-minimal / Clean Doc v0.3 / SSOT tokens */
+/* Hallmark · shape: Workbench · genre: modern-minimal · theme: Coral (by request) · job: try · draw: b2b-micro-saas-clean-doc-2026
+ * hero: Stage · nav: edge-aligned · footer: mast · imagery: none · signature: document conversion workbench on cotton stock
+ * axes: light/grotesk-sans/warm · posture: restrained · contrast: pass · fold: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 · weakest: H, tuned layout hierarchy to ensure single fold visibility */
+@import url("https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap");
+@import url("./tokens.css");
+@import url("./base.css");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+@layer base {
 
-  /* Surfaces & Canvas */
-  --surface-canvas: #f8fafc;
-  --surface-card: #ffffff;
-  --surface-subtle: #f1f5f9;
-  --surface-hover: #e2e8f0;
+  html,
+  body {
+    overflow-x: clip;
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 
-  /* Text & Ink */
-  --ink-primary: #0f172a;
-  --ink-secondary: #475569;
-  --ink-muted: #64748b;
-  --ink-inverse: #ffffff;
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    overflow-wrap: break-word;
+    min-width: 0;
+    text-wrap: balance;
+    color: var(--color-ink);
+    letter-spacing: var(--tracking-display);
+    font-weight: var(--display-weight);
+  }
 
-  /* Accent & Action (Blue 600 / Slate) */
-  --accent-primary: #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-active: #1e40af;
-  --accent-subtle: #eff6ff;
-
-  /* Success & Error */
-  --feedback-success-bg: #ecfdf5;
-  --feedback-success-ink: #065f46;
-  --feedback-error-bg: #fef2f2;
-  --feedback-error-ink: #991b1b;
-  --feedback-error-border: #fecaca;
-
-  /* Borders & Dividers */
-  --border-subtle: #e2e8f0;
-  --border-strong: #cbd5e1;
-
-  /* Radii & Measures */
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
-  --radius-2xl: 1.25rem;
-
-  /* Focus ring */
-  --focus-ring: #3b82f6;
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    transition: none;
+  }
 }
 
-html,
-body {
-  overflow-x: clip;
-  background-color: var(--surface-canvas);
-  color: var(--ink-primary);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@layer components {
+  .desk {
+    background-color: var(--color-desk);
+    background-image: radial-gradient(90% 120% at 0% 30%, var(--color-cotton), transparent 62%);
+  }
+
+  .stock {
+    background-color: var(--color-cotton);
+    color: var(--color-print);
+    box-shadow: var(--edge-stock), var(--cast-stock);
+  }
+
+  .stock-interactive {
+    background-color: var(--color-cotton);
+    color: var(--color-print);
+    box-shadow: var(--edge-stock), var(--cast-stock);
+    transition: border-color var(--dur-short) var(--ease-out);
+  }
+
+  .stock-interactive:hover {
+    border-color: var(--color-muted);
+  }
+
+  .btn-letterpress {
+    min-height: 44px;
+    padding: 0 var(--space-md);
+    border: 1px solid var(--color-rule-2);
+    border-radius: var(--radius-stock);
+    background-color: transparent;
+    color: var(--color-ink);
+    transition: background-color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
+  }
+
+  .btn-letterpress:hover {
+    background-color: var(--color-paper-2);
+    border-color: var(--color-rule);
+  }
+
+  .btn-board {
+    min-height: 48px;
+    padding: 0 var(--space-lg);
+    border: 1px solid var(--color-ink);
+    border-radius: var(--radius-stock);
+    background-color: var(--color-board);
+    color: var(--color-board-type);
+    box-shadow: var(--cast-stock);
+    transition: transform var(--dur-short) var(--ease-out), box-shadow var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
+  }
+
+  .btn-board:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--cast-stock-lift);
+    background-color: var(--color-ink-2);
+  }
+
+  .btn-board:active {
+    transform: translateY(1px);
+  }
+
+  .press-groove {
+    background-color: var(--color-paper-2);
+    box-shadow: var(--press-groove);
+  }
 }
 
-h1, h2, h3, h4, h5, h6 {
-  overflow-wrap: break-word;
-  min-width: 0;
-  color: var(--ink-primary);
-}
-
-/* Hallmark Floor 6: immediate focus-visible */
-:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-  transition: none;
-}
-
-/* Hallmark Floor 7: prefers-reduced-motion fallback */
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {

@@ -19,7 +19,8 @@ def _warmup_docling() -> None:
     logger.info("worker_warmup_docling_started")
     try:
         import fitz
-        from docling.document_converter import DocumentConverter
+
+        from app.workers.tasks import _create_docling_converter
 
         doc = fitz.open()
         page = doc.new_page()
@@ -32,7 +33,7 @@ def _warmup_docling() -> None:
             f.flush()
             temp_path = f.name
 
-        converter = DocumentConverter()
+        converter = _create_docling_converter()
         converter.convert(temp_path)
         if os.path.exists(temp_path):
             os.remove(temp_path)

@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import time
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 import fitz  # PyMuPDF
@@ -118,6 +119,34 @@ def _render_preview(job_id: UUID, input_path: str) -> tuple[int, list[str]]:
     return total_pages, s3_preview_keys
 
 
+def _create_docling_converter() -> Any:
+    """Инициализирует DocumentConverter с Tesseract OCR или базовым парсером."""
+    try:
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import (
+            PdfPipelineOptions,
+            TesseractCliOcrOptions,
+        )
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+
+        pipeline_options = PdfPipelineOptions()
+        if shutil.which("tesseract"):
+            pipeline_options.do_ocr = True
+            pipeline_options.ocr_options = TesseractCliOcrOptions(lang=["rus", "eng"])
+        else:
+            pipeline_options.do_ocr = False
+
+        return DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
+        )
+    except Exception:
+        from docling.document_converter import DocumentConverter
+
+        return DocumentConverter()
+
+
 def _run_docling(target_format: str, input_path: str, output_path: str) -> None:
     """Запускает парсинг Docling и экспортирует в .docx или .xlsx."""
     if not os.environ.get("DOCLING_ARTIFACTS_PATH"):
@@ -125,9 +154,8 @@ def _run_docling(target_format: str, input_path: str, output_path: str) -> None:
 
     import docx
     import pandas as pd
-    from docling.document_converter import DocumentConverter
 
-    converter = DocumentConverter()
+    converter = _create_docling_converter()
     result = converter.convert(input_path)
 
     if len(result.document.pages) == 0:

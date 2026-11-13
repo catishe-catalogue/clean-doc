@@ -67,17 +67,17 @@ export const B2BInvoiceForm: React.FC<B2BInvoiceFormProps> = ({ onRequireAuth, o
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-6 md:p-8 shadow-sm">
+    <div className="bg-cotton rounded-stock border border-rule-2 p-6 sm:p-8 stock">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-800">
+          <div className="w-10 h-10 rounded-stock bg-paper border border-rule-2 flex items-center justify-center text-ink shadow-card">
             <Building2 className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-slate-900">
+            <h3 className="text-base sm:text-lg font-medium text-ink">
               Выставление счета для юридических лиц и ИП
             </h3>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted">
               Автоматическое заполнение реквизитов организации через DaData API
             </p>
           </div>
@@ -86,32 +86,32 @@ export const B2BInvoiceForm: React.FC<B2BInvoiceFormProps> = ({ onRequireAuth, o
           <button
             type="button"
             onClick={onBack}
-            className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1"
+            className="text-xs text-muted hover:text-ink flex items-center gap-1 focus-visible:outline-2 focus-visible:outline-focus"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            Назад к тарифам
+            <span>Назад к тарифам</span>
           </button>
         )}
       </div>
 
       {invoice ? (
         <div className="space-y-6">
-          <div className="p-5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-950 space-y-3">
+          <div className="p-5 rounded-stock bg-paper-2 border border-rule-2 text-ink space-y-3">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0" />
-              <span className="font-semibold text-sm">
+              <CheckCircle2 className="w-5 h-5 text-paid shrink-0" />
+              <span className="font-medium text-sm">
                 Счет {invoice.invoice_number} успешно сформирован
               </span>
             </div>
-            <div className="text-sm space-y-1 text-emerald-900 pt-2 border-t border-emerald-200/60">
+            <div className="text-xs sm:text-sm space-y-1 text-muted pt-2 border-t border-rule-2">
               <p>
-                <strong>Организация:</strong> {invoice.company_name}
+                <strong className="text-ink">Организация:</strong> {invoice.company_name}
               </p>
               <p>
-                <strong>Сумма к оплате:</strong> {invoice.amount_rub.toLocaleString('ru-RU')} ₽ (Без НДС)
+                <strong className="text-ink">Сумма к оплате:</strong> <span className="font-mono tabular-nums">{invoice.amount_rub.toLocaleString('ru-RU')} ₽</span> (Без НДС)
               </p>
               <p>
-                <strong>Назначение платежа:</strong> Годовая подписка на сервис «Чистый документ» (Тариф PRO)
+                <strong className="text-ink">Назначение платежа:</strong> Годовая подписка на сервис «Чистый документ» (Тариф PRO)
               </p>
             </div>
           </div>
@@ -119,10 +119,10 @@ export const B2BInvoiceForm: React.FC<B2BInvoiceFormProps> = ({ onRequireAuth, o
           <div className="flex flex-col sm:flex-row gap-3">
             <button
               onClick={handleDownload}
-              className="flex-1 bg-slate-900 hover:bg-slate-800 active:bg-slate-950 text-white py-3.5 px-6 rounded-xl font-medium text-sm transition-colors flex items-center justify-center gap-2 shadow-sm"
+              className="btn-board flex-1 py-3 px-6 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-focus"
             >
               <Download className="w-4 h-4" />
-              Скачать официальный счет (PDF с факсимиле)
+              <span>Скачать счет (PDF)</span>
             </button>
             <button
               type="button"
@@ -130,13 +130,13 @@ export const B2BInvoiceForm: React.FC<B2BInvoiceFormProps> = ({ onRequireAuth, o
                 setInvoice(null);
                 setInn('');
               }}
-              className="border border-slate-200 hover:bg-slate-50 text-slate-700 py-3.5 px-6 rounded-xl font-medium text-sm transition-colors"
+              className="btn-letterpress py-3 px-6 text-xs sm:text-sm font-medium whitespace-nowrap focus-visible:outline-2 focus-visible:outline-focus"
             >
               Сформировать другой счет
             </button>
           </div>
 
-          <p className="text-xs text-slate-500 leading-relaxed">
+          <p className="text-xs text-muted leading-relaxed">
             После поступления средств на расчетный счет подписка PRO активируется автоматически.
             Закрывающие акты формируются по окончании расчетного периода и направляются через ЭДО или на email.
           </p>
@@ -144,14 +144,14 @@ export const B2BInvoiceForm: React.FC<B2BInvoiceFormProps> = ({ onRequireAuth, o
       ) : (
         <form onSubmit={handleSubmit} className="space-y-5">
           {error && (
-            <div className="p-4 rounded-xl bg-red-50 border border-red-200 flex items-start gap-3 text-sm text-red-800">
-              <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+            <div className="p-4 rounded-stock bg-error/10 border border-error/30 flex items-start gap-3 text-xs sm:text-sm text-error">
+              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
           )}
 
           <div>
-            <label htmlFor="inn-input" className="block text-sm font-medium text-slate-700 mb-1.5">
+            <label htmlFor="inn-input" className="block text-xs sm:text-sm font-medium text-ink mb-1.5">
               ИНН организации или ИП
             </label>
             <input
@@ -161,15 +161,15 @@ export const B2BInvoiceForm: React.FC<B2BInvoiceFormProps> = ({ onRequireAuth, o
               onChange={handleInnChange}
               placeholder="Например: 7707083893"
               disabled={loading}
-              className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none text-slate-900 text-sm placeholder:text-slate-400"
+              className="w-full px-4 py-2.5 rounded-stock border border-rule-2 bg-paper text-ink text-sm font-mono placeholder:text-muted focus-visible:outline-2 focus-visible:outline-focus"
             />
-            <p className="text-xs text-slate-500 mt-1.5">
+            <p className="text-xs text-muted mt-1.5">
               10 цифр для юридических лиц (ООО, АО), 12 цифр для индивидуальных предпринимателей
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-1">
-            <p className="font-semibold text-slate-800">Что входит в тариф PRO (1 год):</p>
+          <div className="p-4 rounded-stock bg-paper-2 border border-rule-2 text-xs text-muted space-y-1">
+            <p className="font-medium text-ink">Параметры годовой подписки PRO:</p>
             <p>• Полный безлимит конвертаций PDF в Word и Excel до 250 страниц на файл</p>
             <p>• Приоритетная очередь с максимальной скоростью обработки</p>
             <p>• Предоставление оригиналов закрывающих документов и актов</p>
@@ -179,17 +179,17 @@ export const B2BInvoiceForm: React.FC<B2BInvoiceFormProps> = ({ onRequireAuth, o
           <button
             type="submit"
             disabled={loading || (inn.length !== 10 && inn.length !== 12)}
-            className="w-full bg-slate-900 hover:bg-slate-800 active:bg-slate-950 disabled:bg-slate-300 text-white py-3.5 rounded-xl font-medium text-sm transition-colors flex items-center justify-center gap-2"
+            className="btn-board w-full py-3 text-xs sm:text-sm font-medium flex items-center justify-center gap-2 nowrap whitespace-nowrap focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50 disabled:pointer-events-none"
           >
             {loading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Поиск реквизитов и генерация счета...
+                <span>Генерация счета…</span>
               </>
             ) : (
               <>
                 <Building2 className="w-4 h-4" />
-                Сформировать счет на 11 900 ₽
+                <span>Выставить счет</span>
               </>
             )}
           </button>

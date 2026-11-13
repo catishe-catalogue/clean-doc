@@ -11,30 +11,30 @@ export const metadata = {
 
 export default function OfferPage() {
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
+    <div className="min-h-screen flex flex-col bg-paper text-ink">
       <Header />
-      <main className="flex-1 max-w-3xl mx-auto w-full px-4 py-10 md:py-14 space-y-6">
+      <main className="flex-1 max-w-4xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 space-y-6">
         <div>
           <Link
             href="/"
-            className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition-colors"
+            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink transition-colors focus-visible:outline-2 focus-visible:outline-focus"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            Вернуться на главную
+            <span>Вернуться на главную</span>
           </Link>
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 md:p-10 shadow-sm space-y-6 text-sm text-slate-700 leading-relaxed">
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-900">
+        <div className="bg-cotton rounded-stock border border-rule-2 p-6 sm:p-10 stock space-y-6 text-xs sm:text-sm text-ink leading-relaxed">
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-ink">
             Договор публичной оферты
           </h1>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-muted">
             Редакция от 15 октября 2026 г. Действует бессрочно до замены новой редакцией.
           </p>
 
           <section className="space-y-2">
-            <h2 className="text-base font-semibold text-slate-900">1. Общие положения</h2>
-            <p>
+            <h2 className="text-base font-medium text-ink">1. Общие положения</h2>
+            <p className="text-muted">
               Настоящий документ является официальным предложением (публичной офертой в соответствии со
               ст. 437 Гражданского кодекса РФ) сервиса «Чистый документ» (далее — Исполнитель) и определяет
               условия предоставления услуг онлайн-конвертации файлов PDF в редактируемые форматы DOCX и XLSX.
@@ -42,8 +42,8 @@ export default function OfferPage() {
           </section>
 
           <section className="space-y-2">
-            <h2 className="text-base font-semibold text-slate-900">2. Предмет оферты</h2>
-            <p>
+            <h2 className="text-base font-medium text-ink">2. Предмет оферты</h2>
+            <p className="text-muted">
               Исполнитель обязуется оказывать Заказчику услуги по автоматической обработке и
               конвертации документов с использованием специализированного программного обеспечения, а
               Заказчик обязуется оплачивать услуги в соответствии с выбранным тарифным планом (Free, PRO).
@@ -51,8 +51,8 @@ export default function OfferPage() {
           </section>
 
           <section className="space-y-2">
-            <h2 className="text-base font-semibold text-slate-900">3. Порядок оплаты и предоставления доступа</h2>
-            <p>
+            <h2 className="text-base font-medium text-ink">3. Порядок оплаты и предоставления доступа</h2>
+            <p className="text-muted">
               Оплата физическими лицами производится безналичным способом через авторизованный платежный
               шлюз ЮKassa (банковские карты РФ, СБП). Оплата юридическими лицами и индивидуальными
               предпринимателями производится по безналичному расчету на основании сформированного PDF-счета.
@@ -60,11 +60,11 @@ export default function OfferPage() {
           </section>
 
           <section className="space-y-2">
-            <h2 className="text-base font-semibold text-slate-900">4. Безопасность и хранение данных</h2>
-            <p>
-              Вся обработка и хранение файлов осуществляются на серверах, расположенных на территории
-              Российской Федерации в соответствии с Федеральным законом № 152-ФЗ «О персональных данных».
-              Файлы Заказчика автоматически удаляются с серверов через 2 часа после завершения конвертации.
+            <h2 className="text-base font-medium text-ink">4. Ответственность и гарантии</h2>
+            <p className="text-muted">
+              Исполнитель гарантирует обработку файлов исключительно в автоматическом режиме без участия
+              операторов-людей, а также гарантирует полное удаление всех файлов из временного хранилища
+              не позднее 2 часов с момента завершения конвертации.
             </p>
           </section>
         </div>

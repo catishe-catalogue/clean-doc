@@ -1853,10 +1853,42 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        primary: "#2563EB",
+        paper: "var(--color-paper)",
+        "paper-2": "var(--color-paper-2)",
+        "paper-3": "var(--color-paper-3)",
+        ink: "var(--color-ink)",
+        "ink-2": "var(--color-ink-2)",
+        muted: "var(--color-muted)",
+        rule: "var(--color-rule)",
+        "rule-2": "var(--color-rule-2)",
+        accent: "var(--color-accent)",
+        "accent-ink": "var(--color-accent-ink)",
+        "accent-2": "var(--color-accent-2)",
+        focus: "var(--color-focus)",
+        cotton: "var(--color-cotton)",
+        desk: "var(--color-desk)",
+        print: "var(--color-print)",
+        board: "var(--color-board)",
+        "board-type": "var(--color-board-type)",
+        paid: "var(--color-paid)",
+        error: "var(--color-error)",
+        success: "var(--color-success)",
+      },
+      fontFamily: {
+        sans: ["var(--font-display)", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif"],
+        display: ["var(--font-display)", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif"],
+        mono: ["var(--font-outlier)", "ui-monospace", "monospace"],
       },
       borderRadius: {
-        xl: "0.75rem",
+        card: "var(--radius-card)",
+        input: "var(--radius-input)",
+        stock: "var(--radius-stock)",
+        pill: "var(--radius-pill)",
+      },
+      boxShadow: {
+        card: "var(--shadow-card)",
+        stock: "var(--cast-stock)",
+        "stock-lift": "var(--cast-stock-lift)",
       },
     },
   },
@@ -1867,24 +1899,25 @@ export default config;
 
 ```css
 /* frontend/src/styles/globals.css */
+/* Hallmark · shape: Workbench · genre: modern-minimal · theme: Coral (by request) */
+@import url("https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap");
+@import url("./tokens.css");
+@import url("./base.css");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --foreground-rgb: 15, 23, 42;
-  --background-start-rgb: 255, 255, 255;
-  --background-end-rgb: 248, 250, 252;
-}
-
-body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+@layer base {
+  html,
+  body {
+    overflow-x: clip;
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+  }
 }
 ```
 

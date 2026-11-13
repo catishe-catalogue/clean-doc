@@ -5,7 +5,8 @@ ENV PYTHONUNBUFFERED=1 \
     UV_SYSTEM_PYTHON=1 \
     PYTHONPATH=/app/.venv/lib/python3.12/site-packages \
     HF_HOME=/app/.cache/huggingface \
-    HUGGINGFACE_HUB_VERBOSITY=error
+    HUGGINGFACE_HUB_VERBOSITY=error \
+    TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 
 WORKDIR /app
 

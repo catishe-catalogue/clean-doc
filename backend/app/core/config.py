@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     DADATA_API_KEY: str | None = None
 
     # Режим быстрой разработки (bypass auth & limits, auto-login catishe@gmail.com PRO)
-    DEV_FAST_MODE: bool = False
+    DEV_FAST_MODE: bool = True
 
     # SMTP для Magic Link
     SMTP_HOST: str = "localhost"

@@ -47,62 +47,58 @@ export default function PricingPage() {
   const isPro = user?.plan === 'pro';
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
+    <div className="min-h-screen flex flex-col bg-paper text-ink">
       <Header />
 
-      <main className="flex-1 max-w-4xl mx-auto w-full px-4 py-10 md:py-14 space-y-10">
-        {/* Хлебные крошки / Назад */}
+      <main className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 space-y-8">
         <div>
           <Link
             href="/"
-            className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition-colors"
+            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink transition-colors focus-visible:outline-2 focus-visible:outline-focus"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            Вернуться к конвертеру
+            <span>Вернуться к конвертеру</span>
           </Link>
         </div>
 
-        {/* Hero-блок страницы тарифов */}
-        <div className="text-center max-w-2xl mx-auto space-y-3">
-          <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight">
+        <div className="text-center max-w-2xl mx-auto space-y-2">
+          <h1 className="text-2xl sm:text-4xl font-semibold tracking-tight text-ink">
             Тарифные планы и оплата
           </h1>
-          <p className="text-slate-600 text-sm md:text-base leading-relaxed">
+          <p className="text-muted text-xs sm:text-sm leading-relaxed">
             Прозрачные условия без скрытых комиссий. Оплата онлайн картами РФ и СБП для физлиц
             или официальный безналичный расчет по счету с закрывающими актами для компаний.
           </p>
         </div>
 
-        {/* Статус активной подписки пользователя */}
         {isPro && (
-          <div className="p-6 rounded-2xl bg-blue-50 border border-blue-200 text-blue-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+          <div className="p-5 rounded-stock bg-cotton border border-ink text-ink flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 stock">
             <div>
               <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse" />
-                <h3 className="font-bold text-base text-blue-900">У вас активен тариф PRO</h3>
+                <span className="w-2 h-2 rounded-full bg-paid" />
+                <h3 className="font-medium text-sm text-ink">У вас активен тариф PRO</h3>
               </div>
-              <p className="text-xs text-blue-700 mt-1">
+              <p className="text-xs text-muted mt-1">
                 Вам доступна конвертация файлов до 100 МБ без ограничений по страницам и очереди.
               </p>
             </div>
             <button
               onClick={handleCancelSub}
               disabled={cancellingSub}
-              className="text-xs text-slate-600 hover:text-red-700 border border-slate-300 hover:border-red-300 bg-white px-3.5 py-2 rounded-xl transition-colors shrink-0"
+              className="btn-letterpress text-xs font-medium text-muted hover:text-error shrink-0 focus-visible:outline-2 focus-visible:outline-focus"
             >
-              {cancellingSub ? 'Отмена...' : 'Отменить автопродление'}
+              {cancellingSub ? 'Отмена…' : 'Отменить автопродление'}
             </button>
           </div>
         )}
 
         {cancelMessage && (
-          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-900 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+          <div className="p-4 rounded-stock bg-paper-2 border border-rule-2 text-xs sm:text-sm text-ink flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-paid shrink-0" />
             <span>{cancelMessage}</span>
           </div>
         )}
 
-        {/* Карточки тарифов или B2B форма */}
         {showB2BForm ? (
           <B2BInvoiceForm
             onRequireAuth={() => setAuthOpen(true)}
@@ -115,43 +111,35 @@ export default function PricingPage() {
           />
         )}
 
-        {/* Блок доверия и гарантий (152-ФЗ, безопасность, инфраструктура) */}
-        <div className="pt-8 border-t border-slate-200">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-slate-600">
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-700 shrink-0 mt-0.5">
-                <ShieldCheck className="w-4 h-4 text-blue-600" />
-              </div>
-              <div>
-                <h4 className="text-sm font-semibold text-slate-900">152-ФЗ и защита данных</h4>
-                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                  Не логируем содержимое документов. Все серверы и хранилище расположены на территории РФ.
-                </p>
-              </div>
+        {/* Гарантии и соответствие стандартам */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4">
+          <div className="p-4 rounded-stock bg-paper-2 border border-rule-2 flex items-start gap-3">
+            <ShieldCheck className="w-5 h-5 text-paid shrink-0 mt-0.5" />
+            <div>
+              <h4 className="text-xs sm:text-sm font-medium text-ink">152-ФЗ и безопасность</h4>
+              <p className="text-xs text-muted mt-1 leading-relaxed">
+                Персональные данные не покидают РФ. Файлы хранятся в зашифрованном виде.
+              </p>
             </div>
+          </div>
 
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-700 shrink-0 mt-0.5">
-                <Server className="w-4 h-4 text-emerald-600" />
-              </div>
-              <div>
-                <h4 className="text-sm font-semibold text-slate-900">Инфраструктура Selectel</h4>
-                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                  Отказоустойчивое S3-хранилище и изолированные воркеры в Санкт-Петербурге и Москве.
-                </p>
-              </div>
+          <div className="p-4 rounded-stock bg-paper-2 border border-rule-2 flex items-start gap-3">
+            <Server className="w-5 h-5 text-paid shrink-0 mt-0.5" />
+            <div>
+              <h4 className="text-xs sm:text-sm font-medium text-ink">Закрывающие документы</h4>
+              <p className="text-xs text-muted mt-1 leading-relaxed">
+                Счета и акты формируются автоматически и отправляются через операторов ЭДО.
+              </p>
             </div>
+          </div>
 
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-700 shrink-0 mt-0.5">
-                <Clock className="w-4 h-4 text-blue-600" />
-              </div>
-              <div>
-                <h4 className="text-sm font-semibold text-slate-900">Автоудаление через 2 часа</h4>
-                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                  Исходные и сконвертированные файлы безвозвратно удаляются автоматическим планировщиком.
-                </p>
-              </div>
+          <div className="p-4 rounded-stock bg-paper-2 border border-rule-2 flex items-start gap-3">
+            <Clock className="w-5 h-5 text-paid shrink-0 mt-0.5" />
+            <div>
+              <h4 className="text-xs sm:text-sm font-medium text-ink">Автоматическое удаление</h4>
+              <p className="text-xs text-muted mt-1 leading-relaxed">
+                Все временные копии документов стираются из S3-хранилища через 2 часа.
+              </p>
             </div>
           </div>
         </div>

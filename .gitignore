@@ -68,6 +68,7 @@ logs/
 minio_data/
 
 # Редакторы и ОС
+.hallmark/
 .vscode/
 .idea/
 *.swp
