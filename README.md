@@ -8,9 +8,11 @@ B2B микро-SaaS онлайн-конвертер PDF в Word и Excel с со
 
 ### Требования
 
-- Docker Desktop
+- Docker Desktop (версия 24+ с поддержкой Docker BuildKit: `export DOCKER_BUILDKIT=1`)
 - Python 3.12+ и [uv](https://docs.astral.sh/uv/)
 - Node.js 20+ и npm
+
+> **Внимание по управлению данными:** команда `make clean` останавливает контейнеры и удаляет тома Docker (PostgreSQL, Redis, MinIO), сбрасывая сохраненную историю задач и сессий. Для повторной инициализации схемы и сидов выполните `make migrate && make seed`. Полная очистка с удалением локальных образов доступна через `make clean-all`.
 
 ### 1. Клонировать репозиторий и скопировать окружение
 
@@ -138,16 +140,19 @@ make help          # Вывести список всех команд
 make dev           # Запустить локальный стек в Docker
 make dev-fast      # Запустить стек в режиме быстрой разработки (DEV_FAST_MODE=true)
 make dev-prod      # Запустить стек в реалистичном Production-режиме (DEV_FAST_MODE=false)
+make build-fast    # Быстрая параллельная сборка Docker образов с кешированием слоев
 make down          # Остановить контейнеры
-make clean         # Остановить и удалить все тома
+make clean         # Остановить и удалить все тома (сбрасывает данные БД и очереди)
+make clean-all     # Полная очистка: остановка, удаление томов и локальных образов
 make migrate       # Применить миграции Alembic
-make seed          # Наполнить тестовыми данными
+make seed          # Идемпотентно наполнить тестовыми данными
 make worker        # Запустить воркер RQ локально
 make lint-md       # Проверить markdown документацию
 make lint-py       # Линтинг Python (Ruff)
 make format-py-fix # Автоисправление форматирования Python
 make typecheck-py  # Строгая проверка типов Python (mypy --strict)
 make test-py       # Тесты Python (pytest)
+make audit-fe      # Аудит зависимостей фронтенда на уязвимости
 make gate          # Полный пайплайн CI-качества перед коммитом
 ```
 

@@ -216,6 +216,7 @@ async def get_current_user_profile(
 
 
 @router.get("/dev-session", response_model=AuthTokenResponse)
+@router.post("/dev-session", response_model=AuthTokenResponse)
 async def get_dev_session(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AuthTokenResponse:

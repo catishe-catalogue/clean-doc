@@ -3,8 +3,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
-import fitz
 import httpx
+import pymupdf
 import structlog
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -219,7 +219,8 @@ class BillingService:
         amount: int,
     ) -> bytes:
         """Формирует типовой PDF-счет на оплату услуг сервиса."""
-        doc = fitz.open()
+        fitz_any: Any = cast(Any, pymupdf)
+        doc = fitz_any.open()
         page = doc.new_page(width=595, height=842)  # A4
 
         # Заголовок и реквизиты поставщика

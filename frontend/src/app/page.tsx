@@ -38,6 +38,7 @@ export default function HomePage() {
     status === 'queued' || status === 'processing' ? streamUrl : null,
     handleSSEMessage,
     handleSSEError,
+    jobId,
   );
 
   const handleConvert = async () => {

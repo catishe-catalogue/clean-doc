@@ -220,8 +220,9 @@ flowchart TD
 ### 4.2. Механизм Fast Local Dev Mode
 
 - **Авторизация:** Зависимости `get_current_user` и `get_optional_user` при `DEV_FAST_MODE=true` автоматически находят или создают в базе данных системного пользователя `catishe@gmail.com` с тарифом `pro`.
-- **Эндпоинт dev-сессии:** Добавлен маршрут `GET /api/v1/auth/dev-session`, отдающий фронтенду готовый JWT токен и профиль администратора.
+- **Эндпоинт dev-сессии:** Маршруты `GET /api/v1/auth/dev-session` и `POST /api/v1/auth/dev-session` отдают фронтенду готовый JWT токен и профиль администратора.
 - **Снятие ограничений воркера:** Воркер `app/workers/tasks.py` при `settings.DEV_FAST_MODE=True` сбрасывает флаг `is_preview_only` в `False`, обеспечивая полную конвертацию всех страниц документа любой длины.
+- **Неблокирующий прогрев моделей:** В основном контейнере `worker` выставлен флаг `WORKER_SKIP_WARMUP=true`, что позволяет процессу моментально начать прием задач из очередей `priority`, `fast`, `heavy`. Прогрев весов Docling вынесен в отдельный сервис `worker-warmup` с общим Docker volume `docling_hf_cache`. Первый холодный запуск занимает до 60 секунд, а повторные старты с прогретым кешем — до 15-20 секунд, не блокируя обработку задач.
 
 ---
 
@@ -261,6 +262,19 @@ flowchart TD
 ---
 
 ## 7. Контрольный чеклист приемки и команды запуска
+
+### Чеклист Definition of Done
+
+- [x] Разделение Docker-образов `api` и `worker`: образ `api` не содержит тяжелых ML-библиотек (`docling`, `torch`, `nvidia-*`).
+- [x] Использование BuildKit cache mounts (`--mount=type=cache`) для apt, uv и npm во всех Dockerfile.
+- [x] Сборка `make build-fast` укладывается в <= 5 минут при наличии кеша.
+- [x] Неблокирующий запуск RQ worker (`WORKER_SKIP_WARMUP=true`) и изоляция прогрева в `worker-warmup`.
+- [x] Безопасность фронтенда: `npm run audit:check` / `make audit-fe` проходит без критических уязвимостей.
+- [x] Идемпотентность сидов: `make seed` (`scripts/seed_dev_data.py`) выполняется повторно без ошибок (`ON CONFLICT DO NOTHING`).
+- [x] Отсутствие отладочного шума SQLAlchemy (`echo=False`) в боевых логах.
+- [x] Синхронизация контракта dev-сессии: поддержка `GET` и `POST` для `/api/v1/auth/dev-session`.
+- [x] Устранение устаревших вызовов PyMuPDF (`fitz` -> `pymupdf`).
+- [x] Все тесты бэкенда (74 теста) и фронтенда успешно проходят через `make gate`.
 
 ### Запуск тестов и линтеров
 

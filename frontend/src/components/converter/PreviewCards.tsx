@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Image from 'next/image';
 import { Eye } from 'lucide-react';
 import { useConverterStore } from '@/store/useConverterStore';
 
@@ -26,12 +27,14 @@ export const PreviewCards: React.FC = () => {
               className="group relative border border-rule-2 rounded-stock overflow-hidden stock transition-transform hover:-translate-y-0.5"
             >
               <div className="aspect-[1/1.414] bg-paper-2 flex items-center justify-center overflow-hidden p-2">
-                <img
+                <Image
                   src={imgSrc}
                   alt={`Страница ${idx + 1}`}
+                  width={1240}
+                  height={1754}
                   className="w-full h-full object-contain"
-                  loading={idx === 0 ? 'eager' : 'lazy'}
-                  fetchPriority={idx === 0 ? 'high' : 'auto'}
+                  priority={idx === 0}
+                  unoptimized
                 />
               </div>
               <div className="p-2.5 text-center text-xs font-mono text-muted bg-paper border-t border-rule-2">

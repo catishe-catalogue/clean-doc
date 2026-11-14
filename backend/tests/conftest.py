@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock
 
-import fitz
+import pymupdf
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -139,7 +139,7 @@ async def async_client_no_db() -> AsyncGenerator[AsyncClient, None]:
 @pytest.fixture
 def sample_pdf_1page() -> bytes:
     """Генерирует валидный 1-страничный PDF с текстом."""
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page()
     page.insert_text((50, 72), "Акт выполненных работ No 123", fontsize=14)
     data = doc.tobytes()
@@ -150,7 +150,7 @@ def sample_pdf_1page() -> bytes:
 @pytest.fixture
 def sample_pdf_2page() -> bytes:
     """Генерирует 2-страничный PDF с текстом."""
-    doc = fitz.open()
+    doc = pymupdf.open()
     p1 = doc.new_page()
     p1.insert_text((50, 72), "Счет на оплату No 45. Страница 1", fontsize=14)
     p2 = doc.new_page()
@@ -163,7 +163,7 @@ def sample_pdf_2page() -> bytes:
 @pytest.fixture
 def sample_pdf_multipage_10page() -> bytes:
     """Генерирует 10-страничный PDF для проверки ограничения Free-тарифа."""
-    doc = fitz.open()
+    doc = pymupdf.open()
     for i in range(10):
         page = doc.new_page()
         page.insert_text((50, 72), f"Договор оказания услуг. Страница {i + 1}", fontsize=12)
@@ -175,16 +175,16 @@ def sample_pdf_multipage_10page() -> bytes:
 @pytest.fixture
 def sample_pdf_table() -> bytes:
     """Генерирует PDF с нарисованной сеткой таблицы."""
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page()
     page.insert_text((50, 50), "Товарная накладная ТОРГ-12", fontsize=14)
     # Рисуем простую таблицу 3x3
     for r in range(4):
         y = 100 + r * 30
-        page.draw_line(fitz.Point(50, y), fitz.Point(400, y))
+        page.draw_line(pymupdf.Point(50, y), pymupdf.Point(400, y))
     for c in range(4):
         x = 50 + c * 116
-        page.draw_line(fitz.Point(x, 100), fitz.Point(x, 190))
+        page.draw_line(pymupdf.Point(x, 100), pymupdf.Point(x, 190))
     page.insert_text((60, 120), "Наименование")
     page.insert_text((180, 120), "Кол-во")
     page.insert_text((300, 120), "Сумма")

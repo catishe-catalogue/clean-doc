@@ -12,7 +12,7 @@ settings = get_settings()
 
 engine = create_async_engine(
     settings.async_database_url,
-    echo=settings.DEBUG,
+    echo=settings.SQLALCHEMY_ECHO,
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,

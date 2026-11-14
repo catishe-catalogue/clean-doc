@@ -4,10 +4,10 @@ import subprocess
 import tempfile
 import time
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
-import fitz  # PyMuPDF
+import pymupdf
 import redis
 import structlog
 from sqlalchemy import create_engine, select, update
@@ -98,10 +98,11 @@ def _validate_pdf_with_qpdf(local_pdf_path: str) -> None:
 
 def _render_preview(job_id: UUID, input_path: str) -> tuple[int, list[str]]:
     """
-    Рендерит страницы 1-2 в JPEG с качеством 150 DPI через PyMuPDF (fitz).
+    Рендерит страницы 1-2 в JPEG с качеством 150 DPI через PyMuPDF.
     Возвращает (общее количество страниц, список ключей S3).
     """
-    doc = fitz.open(input_path)
+    fitz_any: Any = cast(Any, pymupdf)
+    doc = fitz_any.open(input_path)
     total_pages = len(doc)
     pages_to_render = min(total_pages, 2)
     s3_preview_keys: list[str] = []
@@ -137,9 +138,7 @@ def _create_docling_converter() -> Any:
             pipeline_options.do_ocr = False
 
         return DocumentConverter(
-            format_options={
-                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-            }
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
         )
     except Exception:
         from docling.document_converter import DocumentConverter

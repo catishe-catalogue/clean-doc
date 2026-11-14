@@ -192,12 +192,15 @@ cd backend && uv run mypy --strict app
 # 4. Запуск юнит и интеграционных тестов Python
 cd backend && uv run pytest -v tests
 
-# 5. Проверка, сборка и тесты клиентского приложения
-cd frontend && npm run lint && npm run typecheck && npm run test && npm run build && cd ..
+# 5. Проверка, аудит безопасности, сборка и тесты клиентского приложения
+cd frontend && npm run lint && npm run typecheck && npm run test && npm run audit:check && npm run build && cd ..
 
 # 6. Проверка валидности конфигураций Docker Compose
 docker compose -f deploy/docker-compose.yml config --quiet
 docker compose -f deploy/docker-compose.prod.yml config --quiet
+
+# 7. Контрольная быстрая сборка образов (проверка BuildKit кеширования)
+make build-fast
 ```
 
 Если обнаружена ошибка, агент обязан устранить первопричину, а не отключать линтер или удалять тесты.
@@ -261,6 +264,9 @@ docker compose -f deploy/docker-compose.prod.yml config --quiet
 1. **Локальная разработка:** Поднимается одной командой `make dev` через `docker-compose.yml`. Используется MinIO (порт 9000) вместо платного облачного S3 и Mailhog для перехвата писем с Magic Link.
 2. **Продакшн контур:** Поднимается на VDS через `docker-compose.prod.yml`. Перед веб-приложением и API устанавливается **Caddy v2**, обеспечивающий автоматический выпуск SSL-сертификатов Let's Encrypt и терминацию TLS 1.3.
 3. **Соответствие 152-ФЗ:** В проде используются серверы и S3-бакеты, расположенные строго на территории РФ (Selectel, регион ru-1).
+4. **Разделение зависимостей образов:** Сервисы `api` и `worker` используют раздельные optional dependencies (extras) в `backend/pyproject.toml` (`[api]` и `[worker]`). Запрещено устанавливать тяжелые библиотеки (`docling`, `torch`, `nvidia-*`, `tesseract-ocr`) в образ API.
+5. **Обязательные кеш-маунты BuildKit:** Все Dockerfile обязаны использовать директиву `# syntax=docker/dockerfile:1.7` и `--mount=type=cache` для системных пакетов (`apt`) и менеджеров зависимостей (`/root/.cache/uv`, `~/.npm`).
+6. **Изолированный прогрев воркера:** Основной процесс `worker` запускается с `WORKER_SKIP_WARMUP=true` для мгновенного приема задач из очередей `priority`, `fast`, `heavy`. Прогрев моделей Docling выносится в фоновый контейнер `worker-warmup` с общим томом `docling_hf_cache`.
 
 ---
 

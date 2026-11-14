@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -12,6 +13,9 @@ from app.core.config import get_settings
 from app.core.database import engine
 from app.core.redis import redis_pool
 from app.services.storage_service import storage_service
+
+# Подавление избыточных SQL-логов SQLAlchemy Engine в stdout
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 settings = get_settings()
 

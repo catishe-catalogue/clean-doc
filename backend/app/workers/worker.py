@@ -18,11 +18,14 @@ def _warmup_docling() -> None:
         os.environ.pop("DOCLING_ARTIFACTS_PATH", None)
     logger.info("worker_warmup_docling_started")
     try:
-        import fitz
+        from typing import Any, cast
+
+        import pymupdf
 
         from app.workers.tasks import _create_docling_converter
 
-        doc = fitz.open()
+        fitz_any: Any = cast(Any, pymupdf)
+        doc = fitz_any.open()
         page = doc.new_page()
         page.insert_text((50, 72), "CleanDoc Warmup Document", fontsize=12)
         pdf_bytes = doc.tobytes()
@@ -51,7 +54,10 @@ def run_worker() -> None:
         job_timeout=settings.WORKER_JOB_TIMEOUT,
     )
 
-    _warmup_docling()
+    if not settings.WORKER_SKIP_WARMUP:
+        _warmup_docling()
+    else:
+        logger.info("worker_warmup_skipped_by_config")
 
     redis_conn = redis.Redis(
         host=settings.REDIS_HOST,

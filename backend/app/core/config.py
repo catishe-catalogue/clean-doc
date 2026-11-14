@@ -87,7 +87,9 @@ class Settings(BaseSettings):
     # Параметры воркера RQ и Docling
     WORKER_MAX_JOBS: int = 50
     WORKER_JOB_TIMEOUT: int = 180
+    WORKER_SKIP_WARMUP: bool = False
     DOCLING_ARTIFACTS_PATH: str | None = None
+    SQLALCHEMY_ECHO: bool = False
 
     # Telegram Login Widget
     TELEGRAM_BOT_TOKEN: str | None = None

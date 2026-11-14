@@ -77,13 +77,14 @@ services:
       - "1025:1025"  # SMTP
       - "8025:8025"  # Web UI
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 1025 || exit 1"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8025/api/v2/messages?limit=0"]
+      interval: 30s
+      timeout: 3s
       retries: 3
       start_period: 5s
 
   api:
+    image: local/cleandoc-api:dev
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -94,7 +95,8 @@ services:
     environment:
       ENVIRONMENT: dev
       DEBUG: "true"
-      PYTHONPATH: /app/.venv/lib/python3.12/site-packages
+      SQLALCHEMY_ECHO: "false"
+      PYTHONPATH: /app
       POSTGRES_SERVER: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-cleandoc}
@@ -131,7 +133,32 @@ services:
       retries: 5
       start_period: 10s
 
+  worker-warmup:
+    image: local/cleandoc-worker:dev
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.worker
+    container_name: cleandoc_worker_warmup
+    restart: "no"
+    environment:
+      ENVIRONMENT: dev
+      HF_HOME: /root/.cache/huggingface
+      HUGGINGFACE_HUB_VERBOSITY: error
+    command: ["python", "-m", "app.workers.warmup"]
+    volumes:
+      - ../backend/app:/app/app:ro
+      - docling_models:/app/.docling
+      - docling_hf_cache:/root/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
   worker:
+    image: local/cleandoc-worker:dev
     build:
       context: ../backend
       dockerfile: Dockerfile.worker
@@ -140,7 +167,8 @@ services:
     environment:
       ENVIRONMENT: dev
       DEBUG: "true"
-      PYTHONPATH: /app/.venv/lib/python3.12/site-packages
+      PYTHONPATH: /app
+      HF_HOME: /root/.cache/huggingface
       POSTGRES_SERVER: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-cleandoc}
@@ -153,8 +181,9 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-cleandoc-dev}
       S3_REGION: ru-1
-      WORKER_JOB_TIMEOUT: 180
-      WORKER_MAX_JOBS: 50
+      WORKER_JOB_TIMEOUT: ${WORKER_JOB_TIMEOUT:-180}
+      WORKER_MAX_JOBS: ${WORKER_MAX_JOBS:-50}
+      WORKER_SKIP_WARMUP: "true"
       DEV_FAST_MODE: ${DEV_FAST_MODE:-true}
       S3_PUBLIC_URL: http://localhost:9000
     command: ["python", "-m", "app.workers.worker"]
@@ -165,8 +194,10 @@ services:
     volumes:
       - ../backend/app:/app/app:ro
       - docling_models:/app/.docling
-      - docling_hf_cache:/app/.cache/huggingface
+      - docling_hf_cache:/root/.cache/huggingface
     depends_on:
+      worker-warmup:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -175,6 +206,7 @@ services:
         condition: service_healthy
 
   frontend:
+    image: local/cleandoc-frontend:dev
     build:
       context: ../frontend
       dockerfile: Dockerfile
