@@ -27,13 +27,23 @@ const config: Config = {
         board: "var(--color-board)",
         "board-type": "var(--color-board-type)",
         paid: "var(--color-paid)",
+        "paid-muted": "var(--color-paid-muted)",
         error: "var(--color-error)",
+        danger: "var(--color-danger)",
         success: "var(--color-success)",
+        "success-bg": "var(--color-success-bg)",
+        "notify-bg": "var(--color-notify-bg)",
+      },
+      zIndex: {
+        raised: "var(--z-raised)",
+        modal: "var(--z-modal)",
+        toast: "var(--z-toast)",
       },
       fontFamily: {
         sans: ["var(--font-display)", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif"],
         display: ["var(--font-display)", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif"],
         mono: ["var(--font-outlier)", "ui-monospace", "monospace"],
+        outlier: ["var(--font-outlier)", "ui-monospace", "monospace"],
       },
       borderRadius: {
         card: "var(--radius-card)",

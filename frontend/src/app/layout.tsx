@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import '@/styles/globals.css';
 import Providers from './providers';
+import { NotificationBar } from '@/components/ui/NotificationBar';
 
 export const metadata: Metadata = {
   title: 'Чистый документ — онлайн-конвертер PDF в Word и Excel',
@@ -10,8 +11,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ru" className="overflow-x-clip">
-      <body className="overflow-x-clip min-h-screen bg-paper text-ink selection:bg-accent/20">
-        <Providers>{children}</Providers>
+      <body className="overflow-x-clip min-h-screen bg-paper text-ink">
+        <Providers>
+          <NotificationBar />
+          {children}
+        </Providers>
       </body>
     </html>
   );

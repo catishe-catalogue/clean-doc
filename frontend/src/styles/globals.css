@@ -42,6 +42,11 @@
     outline-offset: 2px;
     transition: none;
   }
+
+  ::selection {
+    background-color: color-mix(in oklch, var(--color-accent) 20%, transparent);
+    color: var(--color-ink);
+  }
 }
 
 @layer components {
@@ -100,12 +105,87 @@
   }
 
   .btn-board:active {
-    transform: translateY(1px);
+    transform: translateY(0.5px);
   }
 
   .press-groove {
     background-color: var(--color-paper-2);
     box-shadow: var(--press-groove);
+  }
+
+  /* Модальные окна: анимации входа/выхода */
+  .modal-backdrop {
+    animation: modal-backdrop-in var(--dur-modal-in) var(--ease-modal) forwards;
+  }
+  .modal-backdrop[data-closing] {
+    animation: modal-backdrop-out var(--dur-modal-out) ease-in forwards;
+  }
+  .modal-panel {
+    animation: modal-panel-in var(--dur-modal-in) var(--ease-modal) forwards;
+  }
+  .modal-panel[data-closing] {
+    animation: modal-panel-out var(--dur-modal-out) ease-in forwards;
+  }
+
+  @keyframes modal-backdrop-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  @keyframes modal-backdrop-out {
+    from { opacity: 1; }
+    to   { opacity: 0; }
+  }
+  @keyframes modal-panel-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes modal-panel-out {
+    from { opacity: 1; transform: translateY(0); }
+    to   { opacity: 0; transform: translateY(4px); }
+  }
+
+  /* Нотификационная полоска */
+  .notify-bar {
+    animation: notify-in var(--dur-modal-in) var(--ease-modal) forwards;
+  }
+  .notify-bar[data-closing] {
+    animation: notify-out var(--dur-modal-out) ease-in forwards;
+  }
+  @keyframes notify-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes notify-out {
+    from { opacity: 1; transform: translateY(0); }
+    to   { opacity: 0; transform: translateY(-4px); }
+  }
+
+  /* CSS confetti */
+  .confetti-piece {
+    position: fixed;
+    pointer-events: none;
+    width: 8px;
+    border-radius: 2px;
+    animation: confetti-fall var(--confetti-dur, 1100ms) var(--confetti-delay, 0ms) ease-in forwards;
+    z-index: 9999;
+  }
+  @keyframes confetti-fall {
+    0%   { transform: translateY(0) rotate(0deg); opacity: 1; }
+    80%  { opacity: 1; }
+    100% { transform: translateY(var(--confetti-dist, 420px)) rotate(var(--confetti-rot, 360deg)); opacity: 0; }
+  }
+
+  /* Мобильный drawer */
+  @keyframes drawer-in {
+    from { transform: translateX(100%); }
+    to   { transform: translateX(0); }
+  }
+
+  /* Прогресс загрузки: indeterminate */
+  @keyframes progress-indeterminate {
+    0%   { left: -40%; width: 40%; }
+    60%  { left: 100%; width: 40%; }
+    100% { left: 100%; width: 40%; }
   }
 }
 

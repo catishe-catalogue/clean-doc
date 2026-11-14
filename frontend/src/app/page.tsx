@@ -14,7 +14,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { useSSEStream } from '@/lib/sse-client';
 import { apiClient } from '@/lib/api-client';
 import { SSEProgressPayload, UploadResponse } from '@/lib/types';
-import { ShieldCheck, TableProperties, Sparkles } from 'lucide-react';
+import { ShieldCheck, TableProperties, FileSearch } from 'lucide-react';
 
 export default function HomePage() {
   const { file, targetFormat, jobId, status, startJob, updateFromSSE, setError, reset } = useConverterStore();
@@ -135,7 +135,7 @@ export default function HomePage() {
 
           <div className="p-4 rounded-stock bg-paper-2 border border-rule-2">
             <div className="flex items-center gap-2 mb-1.5 text-ink font-medium text-xs sm:text-sm">
-              <Sparkles className="w-4 h-4 text-paid" />
+              <FileSearch className="w-4 h-4 text-paid" />
               <span>Быстрое превью</span>
             </div>
             <p className="text-xs text-muted leading-relaxed">

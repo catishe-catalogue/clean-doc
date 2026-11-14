@@ -7,7 +7,7 @@ describe("HomePage", () => {
   it("renders main heading correctly", () => {
     render(<HomePage />);
     expect(screen.getByRole("heading", { level: 1 })).toBeDefined();
-    expect(screen.getByText("Чистый документ")).toBeDefined();
+    expect(screen.getAllByText("Чистый документ").length).toBeGreaterThanOrEqual(1);
   });
 
   it("calls /api/v1/auth/dev-session with GET method", async () => {

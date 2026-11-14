@@ -144,8 +144,14 @@ export const B2BInvoiceForm: React.FC<B2BInvoiceFormProps> = ({ onRequireAuth, o
       ) : (
         <form onSubmit={handleSubmit} className="space-y-5">
           {error && (
-            <div className="p-4 rounded-stock bg-error/10 border border-error/30 flex items-start gap-3 text-xs sm:text-sm text-error">
-              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+            <div
+              className="flex items-start gap-2 text-xs"
+              style={{ color: 'var(--color-danger)' }}
+              id="inn-error"
+              role="alert"
+              aria-live="polite"
+            >
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
           )}
@@ -157,13 +163,19 @@ export const B2BInvoiceForm: React.FC<B2BInvoiceFormProps> = ({ onRequireAuth, o
             <input
               id="inn-input"
               type="text"
+              inputMode="numeric"
               value={inn}
               onChange={handleInnChange}
               placeholder="Например: 7707083893"
               disabled={loading}
-              className="w-full px-4 py-2.5 rounded-stock border border-rule-2 bg-paper text-ink text-sm font-mono placeholder:text-muted focus-visible:outline-2 focus-visible:outline-focus"
+              aria-describedby="inn-hint inn-error"
+              className="w-full px-4 py-2.5 rounded-stock border bg-paper text-ink text-sm font-mono placeholder:text-muted focus-visible:outline-2 focus-visible:outline-focus transition-colors"
+              style={{
+                borderColor: error ? 'var(--color-danger)' : undefined,
+                borderWidth: '1px',
+              }}
             />
-            <p className="text-xs text-muted mt-1.5">
+            <p id="inn-hint" className="text-xs text-muted mt-1.5">
               10 цифр для юридических лиц (ООО, АО), 12 цифр для индивидуальных предпринимателей
             </p>
           </div>

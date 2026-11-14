@@ -23,10 +23,13 @@ export const ProcessingView: React.FC = () => {
         <span className="font-mono tabular-nums text-xs font-medium text-muted">{progress}%</span>
       </div>
 
-      <div className="w-full bg-paper-3 rounded-full h-2 overflow-hidden border border-rule-2">
+      <div className="w-full bg-paper-3 rounded-full h-1.5 overflow-hidden border border-rule-2">
         <div
-          className="bg-board h-full transition-transform duration-300 origin-left"
-          style={{ width: `${Math.max(progress, 2)}%` }}
+          className="bg-board h-full origin-left"
+          style={{
+            transform: `scaleX(${Math.max(progress, 2) / 100})`,
+            transition: 'transform 300ms ease-out',
+          }}
         />
       </div>
     </div>

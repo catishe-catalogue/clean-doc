@@ -24,7 +24,7 @@ export const PreviewCards: React.FC = () => {
           return (
             <div
               key={idx}
-              className="group relative border border-rule-2 rounded-stock overflow-hidden stock transition-transform hover:-translate-y-0.5"
+              className="group relative border border-rule-2 rounded-stock overflow-hidden stock transition-transform duration-150 ease-out hover:-translate-y-[1px]"
             >
               <div className="aspect-[1/1.414] bg-paper-2 flex items-center justify-center overflow-hidden p-2">
                 <Image

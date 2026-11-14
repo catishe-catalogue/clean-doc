@@ -73,11 +73,20 @@ export const EmailOtpForm: React.FC<Props> = ({ onSuccess }) => {
           maxLength={6}
           placeholder="000000"
           value={code}
-          onChange={(e) => setCode(e.target.value)}
-          className="w-full border border-rule-2 rounded-stock px-4 py-2.5 text-center text-xl tracking-widest font-mono bg-paper text-ink focus-visible:outline-2 focus-visible:outline-focus"
+          onChange={(e) => { setCode(e.target.value); setError(null); }}
+          aria-describedby={error ? 'otp-error' : undefined}
+          className={`w-full border rounded-stock px-4 py-2.5 text-center text-xl tracking-widest font-mono bg-paper text-ink focus-visible:outline-2 focus-visible:outline-focus transition-colors`}
+          style={{
+            borderColor: error ? 'var(--color-danger)' : undefined,
+            borderWidth: '1px',
+          }}
           autoFocus
         />
-        {error && <p className="text-xs text-error">{error}</p>}
+        {error && (
+          <p id="otp-error" className="text-xs" style={{ color: 'var(--color-danger)' }} role="alert" aria-live="polite">
+            {error}
+          </p>
+        )}
         <button
           type="submit"
           disabled={loading || code.length !== 6}
@@ -102,11 +111,20 @@ export const EmailOtpForm: React.FC<Props> = ({ onSuccess }) => {
         type="email"
         placeholder="your@email.ru"
         value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        className="w-full border border-rule-2 rounded-stock px-4 py-2.5 text-xs sm:text-sm bg-paper text-ink placeholder:text-muted focus-visible:outline-2 focus-visible:outline-focus"
+        onChange={(e) => { setEmail(e.target.value); setError(null); }}
+        aria-describedby={error ? 'email-error' : undefined}
+        className="w-full border rounded-stock px-4 py-2.5 text-xs sm:text-sm bg-paper text-ink placeholder:text-muted focus-visible:outline-2 focus-visible:outline-focus transition-colors"
+        style={{
+          borderColor: error ? 'var(--color-danger)' : undefined,
+          borderWidth: '1px',
+        }}
         required
       />
-      {error && <p className="text-xs text-error">{error}</p>}
+      {error && (
+        <p id="email-error" className="text-xs" style={{ color: 'var(--color-danger)' }} role="alert" aria-live="polite">
+          {error}
+        </p>
+      )}
       <button
         type="submit"
         disabled={loading || !email}
