@@ -366,20 +366,19 @@ def test_tasks_parse_and_convert_failure() -> None:
 
 def test_worker_warmup_docling() -> None:
     """Проверка процедуры превентивного прогрева моделей Docling."""
-    import sys
-
     from app.workers.worker import _warmup_docling
 
     mock_converter_instance = MagicMock()
-    mock_docling_module = MagicMock()
-    mock_docling_module.DocumentConverter.return_value = mock_converter_instance
 
-    with patch.dict(sys.modules, {"docling.document_converter": mock_docling_module}):
+    with patch("app.workers.tasks._create_docling_converter", return_value=mock_converter_instance):
         _warmup_docling()
         mock_converter_instance.convert.assert_called_once()
 
     # Проверка безопасной обработки ошибки при отсутствии весов
-    with patch.dict(sys.modules, {"docling.document_converter": None}):
+    with patch(
+        "app.workers.tasks._create_docling_converter",
+        side_effect=RuntimeError("Weights not found"),
+    ):
         _warmup_docling()
 
 

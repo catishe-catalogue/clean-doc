@@ -667,7 +667,7 @@ data: {"job_id":"8fa8b7d2-7c3e-4b42-9a5c-7b2a59a72190","status":"completed","pro
   - Компонент `FormatSelector`: переключатель форматов Word (`.docx`) или Excel (`.xlsx`);
   - Компонент `ProcessingView`: отображение потокового прогресса шагов конвертации через SSE;
   - Компонент `PreviewCards`: галерея JPEG-превью страниц 1–2;
-  - Компонент `DownloadCard`: выдача готового документа по временному URL или прямому стримингу;
+  - Компонент `DownloadCard`: выдача готового документа по временному URL или прямому стримингу с гарантией корректной структуры DOCX (сохранение заголовков Heading 1/2, списков List Bullet/Number, полужирного начертания bold и детокенизация параграфов);
   - Компонент `UpsellModal`: модальное окно перехода на тариф PRO при многостраничных документах.
 - `/pricing` — Страница тарифов, онлайн-оплаты и B2B-счетов:
   - Компонент `PricingCards`: трехколоночная тарифная сетка: Free (0 ₽), PRO 1 месяц (1 490 ₽, оплата онлайн через ЮKassa по картам РФ и СБП с чеком 54-ФЗ), PRO 1 год B2B (11 900 ₽, скидка 33%);
@@ -828,7 +828,7 @@ make gate
 1. **Markdown линтинг:** `markdownlint "**/*.md" --ignore node_modules`
 2. **Python линтинг и форматирование:** `ruff check backend/ && ruff format --check backend/`
 3. **Python статическая типизация:** `mypy --strict backend/app`
-4. **Python тесты:** `pytest -v --cov=backend/app backend/tests`
+4. **Python тесты:** `pytest -v --cov=backend/app backend/tests`, включая обязательный сквозной тест валидации структуры DOCX (`test_converter_structure.py`) и классификации переносов строк (`test_converter_soft_breaks.py`) на эталонном документе с проверкой стилей Word, списков и отсутствия токенизации абзацев.
 5. **Frontend линтинг и тесты:** `cd frontend && npm run lint && npm run typecheck && npm run test && npm run build && cd ..`
 6. **Docker-compose валидация:** `docker compose -f deploy/docker-compose.yml config --quiet`
 

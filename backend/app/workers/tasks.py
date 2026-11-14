@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -17,7 +18,19 @@ from app.core.config import get_settings
 from app.models.job import ConversionJob
 from app.models.user import User
 from app.schemas.convert import SSEProgressEvent
+from app.services.converter_service import BreakType, TextSpan, _classify_break
 from app.services.storage_service import storage_service
+
+__all__ = [
+    "BreakType",
+    "TextSpan",
+    "_classify_break",
+    "convert_docling_to_docx",
+    "parse_and_convert",
+    "publish_complete",
+    "publish_error",
+    "publish_progress",
+]
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -146,12 +159,133 @@ def _create_docling_converter() -> Any:
         return DocumentConverter()
 
 
-def _run_docling(target_format: str, input_path: str, output_path: str) -> None:
+def convert_docling_to_docx(docling_doc: Any, output_path: str, job_id: UUID | None = None) -> None:
+    """Конвертирует структуру DoclingDocument в документ Word (.docx) с сохранением стилей."""
+    import docx
+    from docx.enum.text import WD_BREAK
+
+    doc = docx.Document()
+    first_header_seen = False
+
+    raw_items = list(docling_doc.iterate_items())
+    logger.info(
+        "converting",
+        job_id=str(job_id) if job_id else "unknown",
+        items_count=len(raw_items),
+    )
+
+    for item, level in raw_items:
+        item_type = type(item).__name__
+
+        # 1. Таблицы
+        if "Table" in item_type and hasattr(item, "export_to_dataframe"):
+            df = item.export_to_dataframe(doc=docling_doc)
+            tbl = doc.add_table(rows=df.shape[0] + 1, cols=df.shape[1])
+            tbl.style = "Table Grid"
+            for j, col in enumerate(df.columns):
+                tbl.cell(0, j).text = str(col)
+            for i, row in enumerate(df.itertuples(index=False)):
+                for j, val in enumerate(row):
+                    tbl.cell(i + 1, j).text = str(val) if val is not None else ""
+            continue
+
+        raw_text = getattr(item, "text", "")
+        if not raw_text or not raw_text.strip():
+            continue
+
+        clean_text = raw_text.strip()
+        # Фильтрация артефактов OCR / разметки колонтитулов (например, -0-8">)
+        if re.match(r"^-[0-9]+-[0-9]+\">?$", clean_text):
+            continue
+        # Фильтрация изолированной пунктуации без букв и цифр
+        if not any(c.isalnum() for c in clean_text) and len(clean_text) < 5:
+            continue
+
+        # 2. Маппинг label -> стиль DOCX
+        label = getattr(item, "label", None)
+        lbl_str = (
+            str(label.value)
+            if (label is not None and hasattr(label, "value"))
+            else str(label or "")
+        )
+        is_bold_heading = False
+
+        if lbl_str == "title" or (lbl_str == "section_header" and not first_header_seen):
+            style_name = "Heading 1"
+            first_header_seen = True
+            is_bold_heading = True
+        elif lbl_str == "section_header":
+            style_name = "Heading 2" if level <= 2 else "Heading 3"
+            is_bold_heading = True
+        elif lbl_str == "list_item":
+            is_ordered = getattr(item, "enumerated", False)
+            style_name = "List Number" if is_ordered else "List Bullet"
+        elif lbl_str == "code":
+            style_name = "Code" if "Code" in doc.styles else "Normal"
+        else:
+            style_name = "Normal"
+
+        # 3. Различение переносов строк Enter vs Shift+Enter
+        raw_lines = [ln.strip() for ln in raw_text.split("\n") if ln.strip()]
+        if not raw_lines:
+            continue
+
+        # Группировка строк: soft break объединяется в один абзац, hard break начинает новый
+        paragraph_groups: list[list[str]] = []
+        current_group: list[str] = [raw_lines[0]]
+        for idx in range(1, len(raw_lines)):
+            prev_l = current_group[-1]
+            cur_l = raw_lines[idx]
+            if _classify_break(prev_l, cur_l) == BreakType.SOFT.value:
+                current_group.append(cur_l)
+            else:
+                paragraph_groups.append(current_group)
+                current_group = [cur_l]
+        if current_group:
+            paragraph_groups.append(current_group)
+
+        for group in paragraph_groups:
+            p = doc.add_paragraph(style=style_name)
+            for l_idx, line in enumerate(group):
+                if l_idx > 0:
+                    p.add_run().add_break(WD_BREAK.LINE)
+
+                # 4. Форматирование runs (bold/italic)
+                if is_bold_heading:
+                    run = p.add_run(line)
+                    run.bold = True
+                elif hasattr(item, "spans") and item.spans:
+                    for s in item.spans:
+                        s_text = getattr(s, "text", "")
+                        if s_text:
+                            run = p.add_run(s_text)
+                            run.bold = getattr(s, "bold", False)
+                            run.italic = getattr(s, "italic", False)
+                else:
+                    # Детекция паттерна ключ: значение ("Занятость: полная", "З/п: ...")
+                    kv_match = re.match(r"^([^:]+:)(\s+.*)$", line)
+                    if kv_match and style_name == "Normal":
+                        r_key = p.add_run(kv_match.group(1))
+                        r_key.bold = True
+                        r_val = p.add_run(kv_match.group(2))
+                        r_val.bold = False
+                    else:
+                        run = p.add_run(line)
+                        fmt = getattr(item, "formatting", None)
+                        if fmt:
+                            run.bold = getattr(fmt, "bold", False)
+                            run.italic = getattr(fmt, "italic", False)
+
+    doc.save(output_path)
+
+
+def _run_docling(
+    target_format: str, input_path: str, output_path: str, job_id: UUID | None = None
+) -> None:
     """Запускает парсинг Docling и экспортирует в .docx или .xlsx."""
     if not os.environ.get("DOCLING_ARTIFACTS_PATH"):
         os.environ.pop("DOCLING_ARTIFACTS_PATH", None)
 
-    import docx
     import pandas as pd
 
     converter = _create_docling_converter()
@@ -161,23 +295,7 @@ def _run_docling(target_format: str, input_path: str, output_path: str) -> None:
         raise ValueError("CONVERSION_FAILED")
 
     if target_format == "docx":
-        doc = docx.Document()
-        for item, level in result.document.iterate_items():
-            item_type = type(item).__name__
-            if "Header" in item_type or "Title" in item_type:
-                doc.add_heading(getattr(item, "text", ""), level=min(level, 3))
-            elif "Table" in item_type and hasattr(item, "export_to_dataframe"):
-                df = item.export_to_dataframe(doc=result.document)
-                tbl = doc.add_table(rows=df.shape[0] + 1, cols=df.shape[1])
-                tbl.style = "Table Grid"
-                for j, col in enumerate(df.columns):
-                    tbl.cell(0, j).text = str(col)
-                for i, row in enumerate(df.itertuples(index=False)):
-                    for j, val in enumerate(row):
-                        tbl.cell(i + 1, j).text = str(val) if val is not None else ""
-            elif hasattr(item, "text") and item.text:
-                doc.add_paragraph(item.text)
-        doc.save(output_path)
+        convert_docling_to_docx(result.document, output_path, job_id=job_id)
     elif target_format == "xlsx":
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             if result.document.tables:
@@ -258,7 +376,7 @@ def parse_and_convert(job_id_str: str) -> None:
             )
 
             local_output = os.path.join(temp_dir, f"output.{target_format}")
-            _run_docling(target_format, local_input, local_output)
+            _run_docling(target_format, local_input, local_output, job_id=job_id)
 
             publish_progress(job_id, 85, f"Формирование файла {target_format.upper()}...")
             s3_output_key = f"temp/{job_id}/output.{target_format}"

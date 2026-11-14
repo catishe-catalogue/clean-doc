@@ -218,38 +218,103 @@ class BillingService:
         address: str,
         amount: int,
     ) -> bytes:
-        """Формирует типовой PDF-счет на оплату услуг сервиса."""
+        """Формирует типовой PDF-счет на оплату услуг сервиса со стилизованными секциями."""
         fitz_any: Any = cast(Any, pymupdf)
         doc = fitz_any.open()
         page = doc.new_page(width=595, height=842)  # A4
 
-        # Заголовок и реквизиты поставщика
-        text_lines = [
-            f"Счет на оплату № {invoice_number} от {datetime.now(UTC).strftime('%d.%m.%Y')} г.",
-            "",
-            'Поставщик: ООО "Чистый документ", ИНН 7701234567, КПП 770101001',
-            "Адрес: 125009, г. Москва, Тверская ул., д. 7",
-            'Банк: АО "ТИНЬКОФФ БАНК", БИК 044525974, Р/с 40702810100000123456',
-            "Корр. счет: 30101810145250000974",
-            "--------------------------------------------------------------------------------",
-            f"Покупатель: {company_name}",
-            f"ИНН: {inn}" + (f", КПП: {kpp}" if kpp else ""),
-            f"Адрес: {address}",
-            "--------------------------------------------------------------------------------",
-            "Наименование товара / услуги: Доступ к сервису «Чистый документ» (тариф PRO на 1 год)",
-            "Кол-во: 1 усл. ед.",
-            f"Сумма к оплате: {amount:,} руб. 00 коп. (НДС не облагается в связи с применением УСН)".replace(
-                ",", " "
-            ),
-            "--------------------------------------------------------------------------------",
-            "В назначении платежа обязательно указывайте номер и дату счета.",
-            "Счет действителен к оплате в течение 5 рабочих дней.",
-        ]
+        # Регистрация встроенных шрифтов PyMuPDF с поддержкой кириллицы
+        f_reg = fitz_any.Font("helv")
+        f_bold = fitz_any.Font("hebo")
+        page.insert_font(fontname="f_reg", fontbuffer=f_reg.buffer)
+        page.insert_font(fontname="f_bold", fontbuffer=f_bold.buffer)
 
-        y_offset = 72
-        for line in text_lines:
-            page.insert_text((50, y_offset), line, fontsize=10, fontname="helv")
-            y_offset += 20
+        # 1. Заголовок счета
+        date_str = datetime.now(UTC).strftime("%d.%m.%Y")
+        title = f"Счет на оплату № {invoice_number} от {date_str} г."
+        page.insert_text((50, 65), title, fontsize=13, fontname="f_bold")
+        page.draw_line((50, 75), (545, 75), color=(0.2, 0.2, 0.2), width=1.5)
+
+        # 2. Реквизиты поставщика
+        page.insert_text((50, 98), "Поставщик:", fontsize=10, fontname="f_bold")
+        page.insert_text(
+            (120, 98),
+            "ООО «Чистый документ», ИНН 7701234567, КПП 770101001",
+            fontsize=10,
+            fontname="f_reg",
+        )
+        page.insert_text(
+            (120, 114), "125009, г. Москва, Тверская ул., д. 7", fontsize=9, fontname="f_reg"
+        )
+        page.insert_text(
+            (120, 130),
+            "Банк: АО «ТИНЬКОФФ БАНК», БИК 044525974, Р/с 40702810100000123456, К/с 30101810145250000974",
+            fontsize=9,
+            fontname="f_reg",
+        )
+
+        page.draw_line((50, 146), (545, 146), color=(0.8, 0.8, 0.8), width=0.5)
+
+        # 3. Реквизиты покупателя
+        page.insert_text((50, 166), "Покупатель:", fontsize=10, fontname="f_bold")
+        buyer_kpp = f", КПП: {kpp}" if kpp else ""
+        page.insert_text(
+            (120, 166),
+            f"{company_name}, ИНН: {inn}{buyer_kpp}",
+            fontsize=10,
+            fontname="f_reg",
+        )
+        page.insert_text((120, 182), f"Адрес: {address}", fontsize=9, fontname="f_reg")
+
+        page.draw_line((50, 200), (545, 200), color=(0.2, 0.2, 0.2), width=1.0)
+
+        # 4. Табличная часть товаров / услуг
+        header_rect = fitz_any.Rect(50, 212, 545, 232)
+        page.draw_rect(header_rect, color=(0.92, 0.92, 0.92), fill=(0.92, 0.92, 0.92))
+        page.insert_text((55, 226), "№", fontsize=9, fontname="f_bold")
+        page.insert_text((75, 226), "Товары (работы, услуги)", fontsize=9, fontname="f_bold")
+        page.insert_text((355, 226), "Кол-во", fontsize=9, fontname="f_bold")
+        page.insert_text((400, 226), "Ед.", fontsize=9, fontname="f_bold")
+        page.insert_text((435, 226), "Цена", fontsize=9, fontname="f_bold")
+        page.insert_text((490, 226), "Сумма", fontsize=9, fontname="f_bold")
+
+        amount_fmt = f"{amount:,}".replace(",", " ")
+        page.insert_text((55, 248), "1", fontsize=9, fontname="f_reg")
+        page.insert_text(
+            (75, 248),
+            "Доступ к сервису «Чистый документ» (тариф PRO на 1 год)",
+            fontsize=9,
+            fontname="f_reg",
+        )
+        page.insert_text((365, 248), "1", fontsize=9, fontname="f_reg")
+        page.insert_text((402, 248), "усл.", fontsize=9, fontname="f_reg")
+        page.insert_text((430, 248), f"{amount_fmt} ₽", fontsize=9, fontname="f_reg")
+        page.insert_text((485, 248), f"{amount_fmt} ₽", fontsize=9, fontname="f_reg")
+
+        page.draw_line((50, 260), (545, 260), color=(0.8, 0.8, 0.8), width=0.5)
+
+        # 5. Итоговые суммы
+        page.insert_text((380, 280), "Итого к оплате:", fontsize=10, fontname="f_bold")
+        page.insert_text((475, 280), f"{amount_fmt} руб. 00 коп.", fontsize=10, fontname="f_bold")
+        page.insert_text(
+            (50, 300), "НДС не облагается в связи с применением УСН.", fontsize=9, fontname="f_reg"
+        )
+
+        page.draw_line((50, 314), (545, 314), color=(0.8, 0.8, 0.8), width=0.5)
+
+        # 6. Условия и назначение платежа
+        page.insert_text(
+            (50, 334),
+            "В назначении платежа обязательно указывайте номер и дату счета.",
+            fontsize=9,
+            fontname="f_reg",
+        )
+        page.insert_text(
+            (50, 350),
+            "Счет действителен к оплате в течение 5 рабочих дней.",
+            fontsize=9,
+            fontname="f_reg",
+        )
 
         pdf_bytes = cast(bytes, doc.tobytes())
         doc.close()

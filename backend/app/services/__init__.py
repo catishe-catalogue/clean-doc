@@ -1,6 +1,9 @@
 from app.services.auth_service import auth_service
 from app.services.billing_service import billing_service
 from app.services.converter_service import (
+    BreakType,
+    TextSpan,
+    _classify_break,
     check_and_increment_daily_limit,
     check_deduplication,
     create_anon_session_token,
@@ -15,6 +18,9 @@ from app.services.email_service import email_service
 from app.services.storage_service import storage_service
 
 __all__ = [
+    "BreakType",
+    "TextSpan",
+    "_classify_break",
     "auth_service",
     "billing_service",
     "dadata_service",

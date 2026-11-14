@@ -1,8 +1,12 @@
 import hashlib
 import ipaddress
+import re
 import secrets
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from enum import StrEnum
 
+import structlog
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -13,11 +17,49 @@ from app.models.job import ConversionJob
 from app.models.usage import DailyUsage
 from app.models.user import User
 
+logger = structlog.get_logger()
 settings = get_settings()
 
 PDF_MAGIC_BYTES = b"%PDF-"
 MAX_FILE_SIZE_FREE = 10 * 1024 * 1024  # 10 МБ
 MAX_FILE_SIZE_PRO = 100 * 1024 * 1024  # 100 МБ
+
+
+class BreakType(StrEnum):
+    """Тип переноса строки между смежными строками текста."""
+
+    SOFT = "soft"
+    HARD = "hard"
+
+
+@dataclass
+class TextSpan:
+    """Фрагмент текста с признаками типографического начертания."""
+
+    text: str
+    bold: bool = False
+    italic: bool = False
+
+
+def _classify_break(prev_line: str, next_line: str) -> str:
+    """
+    Классифицирует разрыв между строками документа:
+    Возвращает 'soft' (Shift+Enter / line break) или 'hard' (Enter / новый абзац).
+    """
+    prev = prev_line.strip()
+    nxt = next_line.strip()
+    if not prev or not nxt:
+        return BreakType.HARD.value
+
+    # Если следующая строка начинается с маркера списка или нумерации
+    if re.match(r"^[•\-\*]\s+", nxt) or re.match(r"^\d+[\.\)]\s+", nxt):
+        return BreakType.HARD.value
+
+    # Если предыдущая строка заканчивается терминальным знаком препинания (. ! ? : ;)
+    if prev[-1] in (".", "!", "?", ":", ";"):
+        return BreakType.HARD.value
+
+    return BreakType.SOFT.value
 
 
 def validate_pdf_header_and_mime(
